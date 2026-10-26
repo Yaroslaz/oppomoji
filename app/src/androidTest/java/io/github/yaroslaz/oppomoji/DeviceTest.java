@@ -171,13 +171,22 @@ public class DeviceTest {
                 assertEquals(copy.getHeight(), bounds.height());
             });
             screenshot("04-saved-report.png");
-            scenario.onActivity(activity -> {
-                activity.reportDialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).performClick();
-                android.content.ClipboardManager clipboard = (android.content.ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
-                assertNotNull(clipboard.getPrimaryClip());
-                assertTrue(clipboard.getPrimaryClip().getItemAt(0).getText().toString().contains("0.1.1-alpha"));
-                clipboard.clearPrimaryClip();
-            });
+            scenario.onActivity(activity -> activity.reportDialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).performClick());
+            await(scenario, "Отчёт скопирован");
+            AtomicReference<String> copied = new AtomicReference<>();
+            long clipboardDeadline = SystemClock.elapsedRealtime() + 5000;
+            do {
+                scenario.onActivity(activity -> {
+                    if (!activity.hasWindowFocus()) return;
+                    android.content.ClipboardManager clipboard = (android.content.ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+                    android.content.ClipData clip = clipboard.getPrimaryClip();
+                    if (clip != null) { copied.set(clip.getItemAt(0).getText().toString()); clipboard.clearPrimaryClip(); }
+                });
+                if (copied.get() != null) break;
+                SystemClock.sleep(50);
+            } while (SystemClock.elapsedRealtime() < clipboardDeadline);
+            assertNotNull("Copied report must be readable after the dialog closes", copied.get());
+            assertTrue(copied.get().contains("0.1.1-alpha"));
         } finally {
             instrumentation.removeMonitor(picker);
             if (uri != null) context.getContentResolver().delete(uri, null, null);
