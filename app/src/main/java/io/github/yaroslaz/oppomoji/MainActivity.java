@@ -281,7 +281,8 @@ public final class MainActivity extends Activity {
             String result = outcome;
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
-                TextView content = label(json, 12, WHITE); content.setTextIsSelectable(true); content.setPadding(dp(16), dp(8), dp(16), dp(8));
+                String display = json.length() <= 12000 ? json : json.substring(0, 12000) + "\n…\nВ окне показано начало отчёта. Кнопка копирует полный JSON.";
+                TextView content = label(display, 12, WHITE); content.setTextIsSelectable(true); content.setPadding(dp(16), dp(8), dp(16), dp(8));
                 ScrollView scroll = new ScrollView(this); scroll.addView(content);
                 new AlertDialog.Builder(this).setTitle("Отчёт о совместимости").setMessage(result).setView(scroll)
                         .setPositiveButton("Закрыть", null).setNeutralButton("Скопировать JSON", (dialog, which) -> {
