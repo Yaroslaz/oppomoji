@@ -10,6 +10,8 @@ import android.net.Uri;
 import android.os.SystemClock;
 import android.widget.TextView;
 import android.widget.Button;
+import android.widget.EditText;
+import android.text.style.SuggestionSpan;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -40,6 +42,8 @@ public class DeviceTest {
                 assertFalse(activity.findViewById(R.id.export_font).isEnabled());
                 assertFalse(activity.findViewById(R.id.weight_slider).isEnabled());
                 assertTrue(((TextView) activity.findViewById(R.id.preview_before)).getText().toString().contains("Подчёркнутый"));
+                EditText input = activity.findViewById(R.id.input_before);
+                assertEquals(1, input.getText().getSpans(0, input.length(), SuggestionSpan.class).length);
             });
             screenshot("01-empty.png");
         }

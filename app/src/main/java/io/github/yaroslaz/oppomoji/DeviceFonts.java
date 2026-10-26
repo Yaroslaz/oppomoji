@@ -81,6 +81,7 @@ final class DeviceFonts {
         active.put("textSizePx", 100); active.put("ascent", metrics.ascent); active.put("descent", metrics.descent);
         active.put("top", metrics.top); active.put("bottom", metrics.bottom); active.put("leading", metrics.leading);
         active.put("underlinePosition", paint.getUnderlinePosition()); active.put("underlineThickness", paint.getUnderlineThickness());
+        active.put("underlineIsAboveBaseline", paint.getUnderlinePosition() < 0);
         active.put("cyrillicGlyph", paint.hasGlyph("Я")); active.put("emojiGlyph", paint.hasGlyph("😀"));
         report.put("activeSystemTypefaceMetrics", active);
         report.put("previewWeight", weight); report.put("underlineDepthPercent", depth);

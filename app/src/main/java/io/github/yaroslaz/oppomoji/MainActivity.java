@@ -20,9 +20,12 @@ import android.provider.Settings;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.UnderlineSpan;
+import android.text.style.SuggestionSpan;
+import android.text.InputType;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -51,6 +54,7 @@ public final class MainActivity extends Activity {
     private TextView textStatus, emojiStatus, status, weightLabel, depthLabel, thicknessLabel, before, after;
     private SeekBar weightSlider, depthSlider, thicknessSlider;
     private Button exportFont, exportText;
+    private EditText inputBefore, inputAfter;
     private SfntFont.Axis weightAxis;
     private String textName, emojiName;
     private int weight, depth, thickness;
@@ -121,6 +125,11 @@ public final class MainActivity extends Activity {
         before = sample(); before.setId(R.id.preview_before); preview.addView(before);
         TextView repairedLabel = label("Копия с выбранными метриками линии", 12, PRIMARY); space(repairedLabel, 18); preview.addView(repairedLabel);
         after = sample(); after.setId(R.id.preview_after); preview.addView(after);
+        preview.addView(label("Поле ввода: исходный шрифт", 12, PRIMARY));
+        inputBefore = inputSample(); inputBefore.setId(R.id.input_before); preview.addView(inputBefore);
+        preview.addView(label("Поле ввода: исправленная копия", 12, PRIMARY));
+        inputAfter = inputSample(); inputAfter.setId(R.id.input_after); preview.addView(inputAfter);
+        preview.addView(label("Белая линия — обычное подчёркивание, цветная — пометка проверки орфографии. Можно ввести свой текст. В отчёт содержимое полей не попадает.", 13, MUTED));
 
         LinearLayout metrics = card(page);
         section(metrics, "03", "Настроить подчёркивание");
@@ -163,6 +172,18 @@ public final class MainActivity extends Activity {
     }
 
     private interface Progress { void set(int value); }
+    private EditText inputSample() {
+        EditText input = new EditText(this);
+        input.setTextColor(WHITE); input.setTextSize(23); input.setMinHeight(dp(120));
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setContentDescription("Проверка подчёркивания и орфографии в поле ввода");
+        SpannableString text = new SpannableString("Шорнт\nИрлоил\nСледующая строка 👋");
+        text.setSpan(new UnderlineSpan(), 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        text.setSpan(new SuggestionSpan(this, new String[]{"Ирландия"},
+                SuggestionSpan.FLAG_EASY_CORRECT | SuggestionSpan.FLAG_MISSPELLED), 6, 12, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        input.setText(text); return input;
+    }
+
     private SeekBar slider(LinearLayout parent, String label, int max, int value, Progress changed) {
         SeekBar slider = new SeekBar(this); slider.setMax(max); slider.setProgress(Math.max(0, Math.min(max, value)));
         slider.setContentDescription(label); slider.setMinHeight(dp(48));
@@ -309,6 +330,7 @@ public final class MainActivity extends Activity {
         runOnUiThread(() -> {
             if (isFinishing() || isDestroyed()) return;
             before.setTypeface(originalResult); after.setTypeface(repairedResult);
+            inputBefore.setTypeface(originalResult); inputAfter.setTypeface(repairedResult);
             textStatus.setText(textFile.isFile() ? textName : "Системный шрифт · OPPO Sans ещё не выбран");
             emojiStatus.setText(emojiFile.isFile() ? emojiName : "Системные эмодзи · файл ещё не выбран");
             if (weightAxis != null) {
