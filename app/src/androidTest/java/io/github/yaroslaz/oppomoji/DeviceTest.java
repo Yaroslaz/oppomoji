@@ -204,7 +204,7 @@ public class DeviceTest {
             decor.getViewTreeObserver().registerFrameCommitCallback(rendered::countDown); decor.invalidate();
         });
         assertTrue("No rendered frame", rendered.await(5, TimeUnit.SECONDS));
-        InstrumentationRegistry.getInstrumentation().getUiAutomation().syncInputTransactions();
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
     private static File roboto() {
