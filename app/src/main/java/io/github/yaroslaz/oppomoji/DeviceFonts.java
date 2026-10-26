@@ -35,11 +35,16 @@ final class DeviceFonts {
     }
 
     static boolean isOppoSans(String family, String filename) {
-        String name = (family + " " + filename).toLowerCase(Locale.ROOT);
-        if (name.contains("serif")) return false;
-        String normalized = name.replaceAll("[^a-z0-9]", "");
-        return normalized.contains("opposans") || normalized.contains("oplussans")
-                || normalized.contains("oneplussans");
+        String internal = family.toLowerCase(Locale.ROOT);
+        if (internal.contains("serif")) return false;
+        if (sansName(internal)) return true;
+        String file = filename.toLowerCase(Locale.ROOT);
+        return !file.contains("serif") && sansName(file);
+    }
+
+    private static boolean sansName(String value) {
+        String normalized = value.replaceAll("[^a-z0-9]", "");
+        return normalized.contains("opposans") || normalized.contains("oplussans") || normalized.contains("oneplussans");
     }
 
     static List<Candidate> candidates() {

@@ -118,6 +118,7 @@ public class DeviceTest {
         assertFalse(DeviceFonts.isOppoSans("OPPO Serif", "OPPOSerif.ttf"));
         assertFalse(DeviceFonts.isOppoSans("OPPO Serif", "OPPOSans.ttf"));
         assertTrue(DeviceFonts.isOppoSans("OPPO Sans", "renamed-font.ttc"));
+        assertTrue(DeviceFonts.isOppoSans("OPPO Sans", "OppoSerifCollection.ttc"));
         assertTrue(DeviceFonts.isOppoSans("OPlus Sans", "generic.ttf"));
         assertFalse(DeviceFonts.isOppoSans("Roboto", "Roboto.ttf"));
     }
