@@ -158,7 +158,25 @@ public class DeviceTest {
             assertNotNull(uri); assertEquals(0, picker.getHits());
             org.json.JSONObject report = new org.json.JSONObject(new String(DeviceFonts.read(context.getContentResolver().openInputStream(uri), 2 * 1024 * 1024), java.nio.charset.StandardCharsets.UTF_8));
             assertEquals("0.1.1-alpha", report.getString("appVersion"));
+            CountDownLatch reportFrame = new CountDownLatch(1);
+            scenario.onActivity(activity -> {
+                android.view.View decor = activity.reportDialog.getWindow().getDecorView();
+                decor.getViewTreeObserver().registerFrameCommitCallback(reportFrame::countDown); decor.invalidate();
+            });
+            assertTrue(reportFrame.await(5, TimeUnit.SECONDS));
+            scenario.onActivity(activity -> {
+                Button copy = activity.reportDialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL);
+                Rect bounds = new Rect(); assertTrue("Copy JSON must be visible", copy.getGlobalVisibleRect(bounds));
+                assertEquals(copy.getHeight(), bounds.height());
+            });
             screenshot("04-saved-report.png");
+            scenario.onActivity(activity -> {
+                activity.reportDialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).performClick();
+                android.content.ClipboardManager clipboard = (android.content.ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+                assertNotNull(clipboard.getPrimaryClip());
+                assertTrue(clipboard.getPrimaryClip().getItemAt(0).getText().toString().contains("0.1.1-alpha"));
+                clipboard.clearPrimaryClip();
+            });
         } finally {
             instrumentation.removeMonitor(picker);
             if (uri != null) context.getContentResolver().delete(uri, null, null);

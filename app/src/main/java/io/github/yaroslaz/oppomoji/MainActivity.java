@@ -68,6 +68,7 @@ public final class MainActivity extends Activity {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable refreshPreview = this::refresh;
     Uri lastReportUri;
+    AlertDialog reportDialog;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -284,12 +285,18 @@ public final class MainActivity extends Activity {
                 String display = json.length() <= 12000 ? json : json.substring(0, 12000) + "\n…\nВ окне показано начало отчёта. Кнопка копирует полный JSON.";
                 TextView content = label(display, 12, WHITE); content.setTextIsSelectable(true); content.setPadding(dp(16), dp(8), dp(16), dp(8));
                 ScrollView scroll = new ScrollView(this); scroll.addView(content);
-                new AlertDialog.Builder(this).setTitle("Отчёт о совместимости").setMessage(result).setView(scroll)
+                reportDialog = new AlertDialog.Builder(this).setTitle("Отчёт о совместимости").setMessage(result).setView(scroll)
                         .setPositiveButton("Закрыть", null).setNeutralButton("Скопировать JSON", (dialog, which) -> {
                             ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
                             if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText("OPPOMoji", json));
                             status.setText("Отчёт скопирован");
-                        }).show();
+                        }).create();
+                reportDialog.setOnShowListener(dialog -> {
+                    android.view.ViewGroup.LayoutParams params = scroll.getLayoutParams();
+                    params.height = Math.min(dp(280), getResources().getDisplayMetrics().heightPixels / 3);
+                    scroll.setLayoutParams(params);
+                });
+                reportDialog.show();
             });
             return outcome;
         });
@@ -551,5 +558,9 @@ public final class MainActivity extends Activity {
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private static boolean supportsCyrillic(SfntFont font) { return font.hasCodePoint('Я') && font.hasCodePoint('я') && font.hasCodePoint('щ'); }
-    @Override protected void onDestroy() { main.removeCallbacks(refreshPreview); super.onDestroy(); }
+    @Override protected void onDestroy() {
+        main.removeCallbacks(refreshPreview);
+        if (reportDialog != null && reportDialog.isShowing()) reportDialog.dismiss();
+        super.onDestroy();
+    }
 }
