@@ -130,7 +130,7 @@ public final class MainActivity extends Activity {
         inputBefore = inputSample(); inputBefore.setId(R.id.input_before); preview.addView(inputBefore);
         preview.addView(label("Поле ввода: исправленная копия", 12, PRIMARY));
         inputAfter = inputSample(); inputAfter.setId(R.id.input_after); preview.addView(inputAfter);
-        preview.addView(label("Белая линия — обычное подчёркивание, цветная — пометка проверки орфографии. Можно ввести свой текст. В отчёт содержимое полей не попадает.", 13, MUTED));
+        preview.addView(label("Белая линия — обычное подчёркивание, цветная — тестовая пометка орфографии. Можно ввести свой текст. В отчёт содержимое полей не попадает.", 13, MUTED));
 
         LinearLayout metrics = card(page);
         section(metrics, "03", "Настроить подчёркивание");
@@ -176,13 +176,21 @@ public final class MainActivity extends Activity {
     private EditText inputSample() {
         EditText input = new EditText(this);
         input.setTextColor(WHITE); input.setTextSize(23); input.setMinHeight(dp(120));
-        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        // Use a deterministic native SuggestionSpan; the dictionary must not replace the demo.
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         input.setContentDescription("Проверка подчёркивания и орфографии в поле ввода");
         SpannableString text = new SpannableString("Шорнт\nИрлоил\nСледующая строка 👋");
         text.setSpan(new UnderlineSpan(), 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        text.setSpan(new SuggestionSpan(this, new String[]{"Ирландия"},
-                SuggestionSpan.FLAG_EASY_CORRECT | SuggestionSpan.FLAG_MISSPELLED), 6, 12, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        input.setText(text); return input;
+        input.setText(text); restoreDemoSuggestion(input); return input;
+    }
+
+    private void restoreDemoSuggestion(EditText input) {
+        if (input.getText().toString().equals("Шорнт\nИрлоил\nСледующая строка 👋")
+                && input.getText().getSpans(0, input.length(), SuggestionSpan.class).length == 0) {
+            // setText() and saved-state restoration remove these spans; add it to the live Editable.
+            input.getText().setSpan(new SuggestionSpan(this, new String[]{"Ирландия"},
+                    SuggestionSpan.FLAG_EASY_CORRECT | SuggestionSpan.FLAG_MISSPELLED), 6, 12, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
     }
 
     private SeekBar slider(LinearLayout parent, String label, int max, int value, Progress changed) {
@@ -332,6 +340,7 @@ public final class MainActivity extends Activity {
             if (isFinishing() || isDestroyed()) return;
             before.setTypeface(originalResult); after.setTypeface(repairedResult);
             inputBefore.setTypeface(originalResult); inputAfter.setTypeface(repairedResult);
+            restoreDemoSuggestion(inputBefore); restoreDemoSuggestion(inputAfter);
             textStatus.setText(textFile.isFile() ? textName : "Системный шрифт · OPPO Sans ещё не выбран");
             emojiStatus.setText(emojiFile.isFile() ? emojiName : "Системные эмодзи · файл ещё не выбран");
             if (weightAxis != null) {

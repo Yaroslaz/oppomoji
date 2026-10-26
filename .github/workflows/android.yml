@@ -86,8 +86,9 @@ jobs:
             adb install -r apks/OPPOMoji-0.1.0-alpha.apk
             adb install -r apks/app-debug-androidTest.apk
             adb shell am instrument -w io.github.yaroslaz.oppomoji.test/androidx.test.runner.AndroidJUnitRunner | tee instrumentation.txt
-            python3 -c "assert 'OK (' in open('instrumentation.txt').read(), 'Instrumentation tests failed'"
             adb pull /sdcard/Android/data/io.github.yaroslaz.oppomoji/files/ screenshots
+            adb logcat -d -s AndroidRuntime:E > android-runtime.txt
+            python3 -c "assert 'OK (' in open('instrumentation.txt').read(), 'Instrumentation tests failed'"
             adb shell settings put system font_scale 1.8
             adb shell am force-stop io.github.yaroslaz.oppomoji
             adb shell am start -W -n io.github.yaroslaz.oppomoji/.MainActivity
