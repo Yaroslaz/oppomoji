@@ -153,7 +153,7 @@ public final class MainActivity extends Activity {
 
     private TextView sample() {
         TextView view = label("", 19, WHITE);
-        String copy = "Съешь ещё этих мягких булок.\nПодчёркнутый текст: руфдцщ\nПривет 👋 😀 🥹 ❤️‍🔥 👨‍👩‍👧‍👦 🇷🇺\nСледующая строка без наложений?";
+        String copy = "Съешь ещё этих мягких булок.\nПодчёркнутый текст: руфдцщ 😀\nПривет 👋 😀 🥹 ❤️‍🔥 👨‍👩‍👧‍👦 🇷🇺\nСледующая строка без наложений?";
         SpannableString styled = new SpannableString(copy);
         int start = copy.indexOf("Подчёркнутый");
         styled.setSpan(new UnderlineSpan(), start, copy.indexOf('\n', start), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
