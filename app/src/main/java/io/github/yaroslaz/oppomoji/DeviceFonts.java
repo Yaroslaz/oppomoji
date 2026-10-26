@@ -4,8 +4,6 @@ import android.os.Build;
 import android.content.Context;
 import android.graphics.Paint;
 import android.graphics.Typeface;
-import android.graphics.fonts.Font;
-import android.graphics.fonts.FontFamily;
 import android.provider.Settings;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -30,27 +28,51 @@ final class DeviceFonts {
             "/my_product/etc/fonts_customization.xml"
     };
 
-    static List<File> candidates() {
-        List<File> found = new ArrayList<>();
+    static final class Candidate {
+        final File file; final int index; final String family; final boolean cyrillic;
+        Candidate(File file, int index, String family, boolean cyrillic) { this.file = file; this.index = index; this.family = family; this.cyrillic = cyrillic; }
+        String label() { return family + " · " + file.getName() + (index > 0 ? " [" + index + "]" : "") + (cyrillic ? "" : " · нет кириллицы"); }
+    }
+
+    static boolean isOppoSans(String family, String filename) {
+        String name = (family + " " + filename).toLowerCase(Locale.ROOT);
+        if (name.contains("serif")) return false;
+        String normalized = name.replaceAll("[^a-z0-9]", "");
+        return normalized.contains("opposans") || normalized.contains("oplussans")
+                || normalized.contains("oneplussans");
+    }
+
+    static List<Candidate> candidates() {
+        List<Candidate> found = new ArrayList<>();
+        java.util.Set<String> visited = new java.util.HashSet<>();
         for (String directory : DIRECTORIES) {
-            File[] files = new File(directory).listFiles();
+            File[] files;
+            try { files = new File(directory).listFiles(); } catch (SecurityException error) { continue; }
             if (files == null) continue;
             for (File file : files) {
                 String name = file.getName().toLowerCase(Locale.ROOT);
-                if ((name.endsWith(".ttf") || name.endsWith(".otf"))
-                        && (name.contains("oppo") || name.contains("oplus") || name.contains("onesans")
-                        || name.contains("coloros")) && file.canRead() && file.length() <= SfntFont.MAX_BYTES) {
-                    found.add(file);
+                if (!(name.endsWith(".ttf") || name.endsWith(".otf") || name.endsWith(".ttc"))) continue;
+                try {
+                    if (!file.canRead() || !visited.add(file.getCanonicalPath())) continue;
+                    try (FontFile font = new FontFile(file)) {
+                        for (int index = 0; index < font.faceCount(); index++) {
+                            SfntFont metadata = font.metadata(index); String family = metadata.familyName();
+                            if (isOppoSans(family, name)) found.add(new Candidate(file, index, family,
+                                    metadata.hasCodePoint('Я') && metadata.hasCodePoint('я') && metadata.hasCodePoint('щ')));
+                        }
+                    }
+                } catch (IOException | RuntimeException ignored) {
+                    // One inaccessible or unsupported font must not abort the scan or report.
                 }
             }
         }
-        found.sort(Comparator.comparingInt(DeviceFonts::priority).thenComparing(File::getAbsolutePath));
+        found.sort(Comparator.comparingInt(DeviceFonts::priority).thenComparing(c -> c.file.getAbsolutePath()));
         return found;
     }
 
-    private static int priority(File file) {
-        String name = file.getName().toLowerCase(Locale.ROOT);
-        return (name.contains("opposans") ? 0 : 10) + (name.contains("vf") || name.contains("variable") ? 0 : 3)
+    private static int priority(Candidate font) {
+        String name = (font.family + font.file.getName()).toLowerCase(Locale.ROOT);
+        return (font.cyrillic ? 0 : 100) + (name.contains("opposans") ? 0 : 10) + (name.contains("vf") || name.contains("variable") ? 0 : 3)
                 + (name.contains("cjk") || name.contains("sc-") ? 20 : 0);
     }
 
@@ -70,28 +92,31 @@ final class DeviceFonts {
 
     static JSONObject report(Context context, File text, File emoji, File repaired, int weight, int depth, int thickness) throws Exception {
         JSONObject report = new JSONObject();
-        report.put("appVersion", "0.1.0-alpha");
+        report.put("appVersion", BuildConfig.VERSION_NAME);
         report.put("createdAt", java.time.Instant.now().toString());
         report.put("manufacturer", Build.MANUFACTURER); report.put("model", Build.MODEL);
         report.put("android", Build.VERSION.RELEASE); report.put("sdk", Build.VERSION.SDK_INT);
         report.put("buildDisplay", Build.DISPLAY); report.put("locale", Locale.getDefault().toLanguageTag());
         report.put("systemChangesAppliedByApp", false);
-        report.put("systemFontScale", Settings.System.getFloat(context.getContentResolver(), Settings.System.FONT_SCALE, 1f));
-        Paint paint = new Paint(); paint.setTypeface(Typeface.DEFAULT); paint.setTextSize(100);
-        Paint.FontMetrics metrics = paint.getFontMetrics();
+        try { finite(report, "systemFontScale", Settings.System.getFloat(context.getContentResolver(), Settings.System.FONT_SCALE, 1f)); }
+        catch (RuntimeException error) { report.put("systemFontScaleError", error.toString()); }
         JSONObject active = new JSONObject();
-        active.put("textSizePx", 100); active.put("ascent", metrics.ascent); active.put("descent", metrics.descent);
-        active.put("top", metrics.top); active.put("bottom", metrics.bottom); active.put("leading", metrics.leading);
-        active.put("underlinePosition", paint.getUnderlinePosition()); active.put("underlineThickness", paint.getUnderlineThickness());
-        active.put("underlineIsAboveBaseline", paint.getUnderlinePosition() < 0);
-        active.put("cyrillicGlyph", paint.hasGlyph("Я")); active.put("emojiGlyph", paint.hasGlyph("😀"));
+        try {
+            Paint paint = new Paint(); paint.setTypeface(Typeface.DEFAULT); paint.setTextSize(100);
+            Paint.FontMetrics metrics = paint.getFontMetrics();
+            active.put("textSizePx", 100); finite(active, "ascent", metrics.ascent); finite(active, "descent", metrics.descent);
+            finite(active, "top", metrics.top); finite(active, "bottom", metrics.bottom); finite(active, "leading", metrics.leading);
+            finite(active, "underlinePosition", paint.getUnderlinePosition()); finite(active, "underlineThickness", paint.getUnderlineThickness());
+            active.put("underlineIsAboveBaseline", paint.getUnderlinePosition() < 0);
+        } catch (RuntimeException error) { active.put("error", error.toString()); }
         report.put("activeSystemTypefaceMetrics", active);
         report.put("previewWeight", weight); report.put("underlineDepthPercent", depth);
         report.put("underlineThicknessPercent", thickness / 10.0);
         report.put("textFont", description(text)); report.put("emojiFont", description(emoji));
         report.put("repairedFont", description(repaired));
+        report.put("repairedTextFont", description(new File(context.getFilesDir(), "text-repaired.ttf")));
         JSONArray candidates = new JSONArray();
-        for (File file : candidates()) candidates.put(file.getAbsolutePath());
+        for (Candidate font : candidates()) candidates.put(font.file.getAbsolutePath() + " #" + font.index + " " + font.family);
         report.put("oppoFontCandidates", candidates);
         JSONObject configs = new JSONObject();
         for (String path : CONFIGS) {
@@ -104,13 +129,13 @@ final class DeviceFonts {
         return report;
     }
 
+    static void finite(JSONObject object, String key, float value) throws org.json.JSONException {
+        object.put(key, Float.isFinite(value) ? value : JSONObject.NULL);
+    }
+
     private static Object description(File file) throws Exception {
         if (!file.isFile()) return JSONObject.NULL;
-        JSONObject result = new JSONObject(new SfntFont(read(file)).describe());
-        Paint paint = new Paint(); paint.setTextSize(100);
-        paint.setTypeface(new Typeface.CustomFallbackBuilder(new FontFamily.Builder(new Font.Builder(file).build()).build()).build());
-        result.put("nativeUnderlinePositionAt100Px", paint.getUnderlinePosition());
-        result.put("nativeUnderlineThicknessAt100Px", paint.getUnderlineThickness());
-        return result;
+        try (FontFile font = new FontFile(file)) { return new JSONObject(font.describe(0)); }
+        catch (IOException | RuntimeException error) { return new JSONObject().put("error", error.toString()); }
     }
 }

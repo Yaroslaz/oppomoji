@@ -132,6 +132,49 @@ public final class SfntFont {
         return null;
     }
 
+    public boolean hasCodePoint(int codePoint) {
+        Table cmap = tables.get("cmap");
+        if (cmap == null || cmap.length < 4) return false;
+        int count = u16(cmap.offset + 2);
+        if (4L + 8L * count > cmap.length) return false;
+        for (int i = 0; i < count; i++) {
+            int record = cmap.offset + 4 + i * 8;
+            int platform = u16(record), encoding = u16(record + 2);
+            if (platform != 0 && !(platform == 3 && (encoding == 1 || encoding == 10))) continue;
+            long relative = u32(record + 4);
+            if (relative + 2 > cmap.length) continue;
+            int sub = cmap.offset + (int) relative, format = u16(sub);
+            if (format == 12 && relative + 16 <= cmap.length) {
+                long length = u32(sub + 4), groups = u32(sub + 12);
+                if (relative + length > cmap.length || 16L + 12L * groups > length) continue;
+                for (int g = 0; g < groups; g++) {
+                    int item = sub + 16 + g * 12;
+                    long start = u32(item), end = u32(item + 4);
+                    if (codePoint >= start && codePoint <= end && u32(item + 8) + codePoint - start != 0) return true;
+                }
+            } else if (format == 4 && codePoint <= 0xffff && relative + 16 <= cmap.length) {
+                int length = u16(sub + 2), segments = u16(sub + 6) / 2;
+                if (length < 16 || relative + length > cmap.length || 16L + segments * 8L > length) continue;
+                int ends = sub + 14, starts = ends + segments * 2 + 2;
+                int deltas = starts + segments * 2, ranges = deltas + segments * 2;
+                for (int s = 0; s < segments; s++) {
+                    int start = u16(starts + s * 2), end = u16(ends + s * 2);
+                    if (codePoint < start || codePoint > end) continue;
+                    int delta = s16(deltas + s * 2), range = u16(ranges + s * 2);
+                    if (range == 0) { if (((codePoint + delta) & 0xffff) != 0) return true; }
+                    else {
+                        long glyphOffset = (long) ranges + s * 2 + range + 2L * (codePoint - start);
+                        if (glyphOffset + 2 <= (long) sub + length) {
+                            int glyph = u16((int) glyphOffset);
+                            if (glyph != 0 && ((glyph + delta) & 0xffff) != 0) return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     public String colorFormat() {
         if (hasTable("CBDT") && hasTable("CBLC")) return "CBDT/CBLC";
         if (hasTable("COLR") && hasTable("CPAL")) return "COLR/CPAL";
@@ -145,6 +188,7 @@ public final class SfntFont {
         result.put("family", familyName()); result.put("bytes", source.length);
         result.put("unitsPerEm", unitsPerEm()); result.put("ascent", ascent()); result.put("descent", descent());
         result.put("color", colorFormat()); result.put("tables", tableTags());
+        result.put("supportsCyrillicSample", hasCodePoint('Я') && hasCodePoint('я') && hasCodePoint('щ'));
         if (hasTable("post")) {
             result.put("underlinePosition", underlinePosition()); result.put("underlineThickness", underlineThickness());
         }
@@ -160,7 +204,6 @@ public final class SfntFont {
             throw invalid("Метрики линии выходят за допустимый диапазон");
         }
         require("post", 32);
-        if (hasTable("MVAR")) throw invalid("Есть вариативные метрики MVAR. Эта версия не изменяет такой шрифт");
         Map<String, byte[]> copies = new LinkedHashMap<>();
         List<String> tags = tableTags();
         Collections.sort(tags);
@@ -172,12 +215,44 @@ public final class SfntFont {
         }
         ByteBuffer post = ByteBuffer.wrap(copies.get("post")).order(ByteOrder.BIG_ENDIAN);
         post.putShort(8, (short) position); post.putShort(10, (short) thickness);
+        if (copies.containsKey("MVAR")) copies.put("MVAR", withoutUnderlineVariations(copies.get("MVAR")));
+        return pack(buffer().getInt(0), copies);
+    }
+
+    /** Keep unrelated metric variations and their store offsets intact. */
+    private static byte[] withoutUnderlineVariations(byte[] original) throws IOException {
+        byte[] data = original.clone();
+        ByteBuffer b = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN);
+        if (data.length < 12 || b.getShort(0) != 1 || b.getShort(2) != 0) throw new IOException("Повреждённая или неподдерживаемая MVAR");
+        int size = b.getShort(6) & 0xffff, count = b.getShort(8) & 0xffff, store = b.getShort(10) & 0xffff;
+        long end = 12L + (long) size * count;
+        if (size < 8 || end > data.length || (count > 0 && store == 0) || (store != 0 && (store < end || store >= data.length))) throw new IOException("Повреждён каталог MVAR");
+        int kept = 0;
+        for (int i = 0; i < count; i++) {
+            int offset = 12 + i * size;
+            String tag = new String(data, offset, 4, StandardCharsets.US_ASCII);
+            if (!tag.equals("undo") && !tag.equals("unds")) {
+                System.arraycopy(data, offset, data, 12 + kept * size, size); kept++;
+            }
+        }
+        b.putShort(8, (short) kept);
+        if (kept == 0) b.putShort(10, (short) 0);
+        // Old records are now unreferenced padding. The variation store stays byte-for-byte intact.
+        Arrays.fill(data, 12 + kept * size, (int) end, (byte) 0);
+        return data;
+    }
+
+    static byte[] pack(int signature, Map<String, byte[]> input) throws IOException {
+        Map<String, byte[]> copies = new LinkedHashMap<>();
+        List<String> names = new ArrayList<>(input.keySet()); Collections.sort(names);
+        for (String name : names) if (!name.equals("DSIG")) copies.put(name, name.equals("head") ? input.get(name).clone() : input.get(name));
+        if (!copies.containsKey("head") || copies.get("head").length < 54 || copies.size() > 256) throw new IOException("Нет корректной таблицы head");
         ByteBuffer.wrap(copies.get("head")).order(ByteOrder.BIG_ENDIAN).putInt(8, 0);
         int count = copies.size(), length = 12 + count * 16;
         for (byte[] table : copies.values()) length += padded(table.length);
-        if (length > MAX_BYTES) throw invalid("Результат слишком большой");
+        if (length > MAX_BYTES) throw new IOException("Результат слишком большой");
         ByteBuffer out = ByteBuffer.allocate(length).order(ByteOrder.BIG_ENDIAN);
-        out.putInt(buffer().getInt(0)); out.putShort((short) count);
+        out.putInt(signature); out.putShort((short) count);
         int power = Integer.highestOneBit(count);
         out.putShort((short) (16 * power)); out.putShort((short) Integer.numberOfTrailingZeros(power));
         out.putShort((short) (16 * count - 16 * power));
