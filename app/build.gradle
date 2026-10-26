@@ -1,5 +1,8 @@
 plugins { id 'com.android.application' }
 
+def developmentKeyPath = System.getenv('OPPOMOJI_KEYSTORE_PATH')
+def hasDevelopmentKey = developmentKeyPath != null && new File(developmentKeyPath).isFile()
+
 android {
     namespace 'io.github.yaroslaz.oppomoji'
     compileSdk 36
@@ -17,8 +20,23 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    signingConfigs {
+        if (hasDevelopmentKey) {
+            stableDevelopment {
+                storeFile file(developmentKeyPath)
+                storeType 'PKCS12'
+                storePassword System.getenv('OPPOMOJI_KEYSTORE_PASSWORD')?.trim()
+                keyAlias 'oppomoji'
+                keyPassword System.getenv('OPPOMOJI_KEYSTORE_PASSWORD')?.trim()
+            }
+        }
+    }
     buildTypes {
-        release { minifyEnabled false }
+        debug { if (hasDevelopmentKey) signingConfig signingConfigs.stableDevelopment }
+        release {
+            minifyEnabled false
+            if (hasDevelopmentKey) signingConfig signingConfigs.stableDevelopment
+        }
     }
     buildFeatures { buildConfig true }
     lint { abortOnError true }

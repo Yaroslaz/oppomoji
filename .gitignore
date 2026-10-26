@@ -8,3 +8,4 @@ private-fonts/
 *.keystore
 *.jks
 artifacts/
+.signing/

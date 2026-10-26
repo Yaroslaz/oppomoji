@@ -30,12 +30,19 @@ jobs:
       - name: Install Android 16 SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Keep development signing key for update installs
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: oppomoji-development-signing-v1
+      - name: Restore persistent development signing key
+        if: github.event_name != 'pull_request'
+        env:
+          SIGNING_KEY: ${{ secrets.OPPOMOJI_SIGNING_KEY }}
+        run: |
+          test -n "$SIGNING_KEY"
+          umask 077
+          mkdir -p .signing
+          printf '%s' "$SIGNING_KEY" | tr -d '\r\n' | base64 --decode > .signing/oppomoji.p12
       - name: Test, lint and build
+        env:
+          OPPOMOJI_KEYSTORE_PATH: ${{ github.workspace }}/.signing/oppomoji.p12
+          OPPOMOJI_KEYSTORE_PASSWORD: ${{ secrets.OPPOMOJI_SIGNING_PASSWORD }}
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
       - name: Name APK and record checksum
         run: |
