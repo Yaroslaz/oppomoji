@@ -240,19 +240,23 @@ public class DeviceTest {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             await(scenario, "Предпросмотр готов");
             scenario.onActivity(activity -> {
-                TextView probe = activity.findViewById(R.id.active_system_sample);
+                TextView control = new TextView(activity), probe = new TextView(activity);
                 int width = android.view.View.MeasureSpec.makeMeasureSpec(900, android.view.View.MeasureSpec.EXACTLY);
                 int height = android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED);
-                probe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 100);
-                probe.setMinimumFontMetrics(null); probe.setLocalePreferredLineHeightForMinimumUsed(false);
-                probe.measure(width, height); probe.layout(0, 0, 900, probe.getMeasuredHeight());
-                int originalSpacing = probe.getLayout().getLineBaseline(1) - probe.getLayout().getLineBaseline(0);
                 Paint.FontMetrics huge = new Paint.FontMetrics(); huge.ascent = -200; huge.descent = 100; huge.top = -200; huge.bottom = 100;
                 probe.setMinimumFontMetrics(huge);
-                probe.measure(width, height); probe.layout(0, 0, 900, probe.getMeasuredHeight());
+                // These setters do not invalidate an existing TextView layout. Measure fresh views.
+                for (TextView view : new TextView[]{control, probe}) {
+                    view.setLocalePreferredLineHeightForMinimumUsed(false);
+                    view.setText("Первая\nВторая\nТретья");
+                    view.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 100);
+                    view.measure(width, height); view.layout(0, 0, 900, view.getMeasuredHeight());
+                }
+                int originalSpacing = control.getLayout().getLineBaseline(1) - control.getLayout().getLineBaseline(0);
                 try {
                     org.json.JSONObject snapshot = LineDiagnostics.snapshot(probe);
-                    assertTrue(snapshot.getJSONArray("baselineDistancesPx").getInt(0) > originalSpacing + 100);
+                    int measured = snapshot.getJSONArray("baselineDistancesPx").getInt(0);
+                    assertTrue("Minimum metrics must expand spacing: " + originalSpacing + " -> " + measured, measured > originalSpacing + 100);
                     assertEquals(100, snapshot.getInt("textSizePx"));
                     assertTrue(snapshot.has("localeMetricsAt100px"));
                 } catch (org.json.JSONException error) { throw new AssertionError(error); }
