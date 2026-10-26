@@ -1,0 +1,7 @@
+<resources>
+    <item name="status" type="id" />
+    <item name="preview_before" type="id" />
+    <item name="preview_after" type="id" />
+    <item name="export_font" type="id" />
+    <item name="weight_slider" type="id" />
+</resources>
