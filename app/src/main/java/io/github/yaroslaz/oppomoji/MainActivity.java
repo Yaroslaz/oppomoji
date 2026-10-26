@@ -73,6 +73,7 @@ public final class MainActivity extends Activity {
     private int weight, depth, thickness;
     private boolean busy;
     private boolean textSupportsCyrillic = true;
+    private boolean verifiedEmoji;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable refreshPreview = this::refresh;
     Uri lastReportUri;
@@ -88,6 +89,7 @@ public final class MainActivity extends Activity {
         repairedTextFile = new File(getFilesDir(), "text-repaired.ttf");
         textName = prefs.getString("textName", "Системный шрифт");
         emojiName = prefs.getString("emojiName", "Системные эмодзи");
+        verifiedEmoji = prefs.getBoolean("verifiedEmoji", false) && emojiFile.isFile();
         weight = prefs.getInt("weight", 500); depth = prefs.getInt("depth", 10); thickness = prefs.getInt("thickness", 40);
         buildUi();
         task("Проверяю сохранённые шрифты…", () -> {
@@ -163,6 +165,9 @@ public final class MainActivity extends Activity {
         Button activeEmoji = button("Взять активный emoji-шрифт из системы", v -> loadActiveEmoji());
         activeEmoji.setId(R.id.load_active_emoji); sources.addView(activeEmoji);
         sources.addView(label("Читает шрифт, которым Android сейчас рисует 😀. При включённой замене это может быть твой пакет из zFont.", 13, MUTED));
+        Button fullEmoji = button("Загрузить полный iOS-набор · Emoji 17.0", v -> downloadEmoji());
+        fullEmoji.setId(R.id.download_emoji); sources.addView(fullEmoji);
+        sources.addView(label("35 МБ с GitHub, только по нажатию. Проверяется SHA-256 закреплённой версии. В Android 16 проверены 3 944 эмодзи и 9 компонентов, включая ☺️ ❤️ 😶‍🌫️ 🙂‍↕️ 🙂‍↔️. Для установки через zFont сохрани исправленный emoji-шрифт в разделе 04.", 13, MUTED));
 
         LinearLayout preview = card(page);
         section(preview, "02", "Сравнить отображение");
@@ -219,13 +224,13 @@ public final class MainActivity extends Activity {
 
         status = label("Готово к проверке", 14, PRIMARY); status.setId(R.id.status); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         status.setTextIsSelectable(true); page.addView(status);
-        TextView footer = label("Работает без сети и root. Отчёт сохраняется только по твоей команде.", 12, MUTED); space(footer, 20); page.addView(footer);
+        TextView footer = label("Обработка шрифтов работает без сети и root. Интернет используется по кнопке загрузки набора; отчёты никуда не отправляются.", 12, MUTED); space(footer, 20); page.addView(footer);
     }
 
     private TextView sample() {
         TextView view = label("", 19, WHITE);
         interfaceText.remove(view);
-        String copy = "Съешь ещё этих мягких булок.\nПодчёркнутый текст: руфдцщ 😀\nПривет 👋 😀 🥹 ❤️‍🔥 👨‍👩‍👧‍👦 🇷🇺\nСледующая строка без наложений?";
+        String copy = "Съешь ещё этих мягких булок.\nПодчёркнутый текст: руфдцщ 😀\nПривет 👋 ☺️ ❤️ 😶‍🌫️ 🙂‍↕️ 🙂‍↔️\nНовое: 🫪 🫍 🧑‍🩰 🫯\nСемья 👨‍👩‍👧‍👦 · флаг 🇷🇺\nСледующая строка без наложений?";
         SpannableString styled = new SpannableString(copy);
         int start = copy.indexOf("Подчёркнутый");
         styled.setSpan(new UnderlineSpan(), start, copy.indexOf('\n', start), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -307,6 +312,9 @@ public final class MainActivity extends Activity {
             JSONObject report = DeviceFonts.report(this, textFile, emojiFile, repairedFile, weight, depth, thickness);
             report.put("lineLayouts", layouts);
             report.put("previewEmojiSource", emojiFile.isFile() ? "imported-file" : activeSystemEmoji != null ? "active-system-font" : "system-fallback");
+            if (verifiedEmoji) report.put("verifiedEmojiSet", new JSONObject().put("unicodeVersion", "17.0")
+                    .put("sourceUrl", EmojiSource.URL).put("sourceSha256BeforeRepair", EmojiSource.SHA256)
+                    .put("fullyQualifiedTested", 3944).put("componentsTested", 9));
             String json = report.toString(2), brief = DeviceFonts.clipboardSummary(report);
             byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
             String name = "OPPOMoji-report-" + System.currentTimeMillis() + ".json";
@@ -384,6 +392,7 @@ public final class MainActivity extends Activity {
                     }
                     Files.move(temporary.toPath(), emojiFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
                     emojiName = info.familyName() + " · " + info.colorFormat();
+                    verifiedEmoji = false;
                 }
                 savePreferences(); return makePreview();
             });
@@ -418,12 +427,31 @@ public final class MainActivity extends Activity {
             new Font.Builder(temporary).build();
             Files.move(temporary.toPath(), emojiFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             emojiName = info.familyName() + " · активные системные эмодзи";
+            verifiedEmoji = false;
+            savePreferences(); return makePreview();
+        });
+    }
+
+    private void downloadEmoji() {
+        task("Загружаю проверенный iOS-набор · 35 МБ…", () -> {
+            File temporary = new File(getCacheDir(), "download-emoji.ttf");
+            EmojiSource.download(temporary, bytes -> runOnUiThread(() -> {
+                if (!isFinishing() && !isDestroyed()) status.setText("Загружаю iOS-набор: " + bytes * 100 / EmojiSource.BYTES + "%");
+            }));
+            try (FontFile source = new FontFile(temporary)) {
+                SfntFont info = source.metadata(0);
+                if (!info.hasTable("CBDT") || !info.hasTable("GSUB")) throw new IOException("Набор не содержит нужных цветных таблиц и составных эмодзи");
+            }
+            new Font.Builder(temporary).build();
+            Files.move(temporary.toPath(), emojiFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            emojiName = "iOS-набор · Emoji 17.0 · 3 944 эмодзи + 9 компонентов"; verifiedEmoji = true;
             savePreferences(); return makePreview();
         });
     }
 
     private void savePreferences() {
         prefs.edit().putString("textName", textName).putString("emojiName", emojiName)
+                .putBoolean("verifiedEmoji", verifiedEmoji)
                 .putInt("weight", weight).putInt("depth", depth).putInt("thickness", thickness).apply();
     }
 
@@ -580,6 +608,7 @@ public final class MainActivity extends Activity {
                         task("Убираю локальные копии…", () -> {
                             Files.deleteIfExists(textFile.toPath()); Files.deleteIfExists(emojiFile.toPath()); Files.deleteIfExists(repairedFile.toPath()); Files.deleteIfExists(repairedTextFile.toPath());
                             weightAxis = null; textName = "Системный шрифт"; emojiName = "Системные эмодзи";
+                            verifiedEmoji = false;
                             savePreferences(); return makePreview();
                         })).show();
     }

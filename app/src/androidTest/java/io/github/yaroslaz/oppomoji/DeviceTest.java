@@ -324,6 +324,57 @@ public class DeviceTest {
         }
     }
 
+    @Test public void fullEmoji17SetUsesOneColorGlyphFromSelectedFontForEverySequence() throws Exception {
+        File prepared = new File(context.getExternalFilesDir(null), "verified-emoji.ttf");
+        assertTrue("Prepare the pinned font with tools/prepare_emoji.py and push it into the app's external files", prepared.isFile());
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            await(scenario, "Предпросмотр готов");
+            scenario.onActivity(activity -> activity.onActivityResult(10, Activity.RESULT_OK, new Intent().setData(Uri.fromFile(roboto()))));
+            await(scenario, "Копия текстового шрифта готова");
+            scenario.onActivity(activity -> activity.onActivityResult(11, Activity.RESULT_OK, new Intent().setData(Uri.fromFile(prepared))));
+            await(scenario, "Копия текстового шрифта готова");
+            AtomicReference<Typeface> before = new AtomicReference<>(), after = new AtomicReference<>();
+            scenario.onActivity(activity -> {
+                before.set(((TextView) activity.findViewById(R.id.preview_before)).getTypeface());
+                after.set(((TextView) activity.findViewById(R.id.preview_after)).getTypeface());
+            });
+            java.util.List<String> failures = new java.util.ArrayList<>();
+            int total = 0, qualified = 0, components = 0;
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    context.getAssets().open("emoji-17.0.txt"), java.nio.charset.StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.isEmpty() || line.startsWith("#")) continue;
+                    String[] row = line.split(";", 3); StringBuilder text = new StringBuilder();
+                    for (String cp : row[0].split(" ")) text.appendCodePoint(Integer.parseInt(cp, 16));
+                    total++; if (row[1].equals("fully-qualified")) qualified++; else components++;
+                    for (boolean fixed : new boolean[]{false, true}) {
+                        Paint paint = new Paint(); paint.setTextSize(48); paint.setTypeface(fixed ? after.get() : before.get());
+                        android.graphics.text.PositionedGlyphs glyphs = android.graphics.text.TextRunShaper.shapeTextRun(
+                                text, 0, text.length(), 0, text.length(), 0, 0, false, paint);
+                        File expected = new File(context.getFilesDir(), fixed ? "emoji-repaired.ttf" : "emoji.ttf");
+                        if (glyphs.glyphCount() != 1 || glyphs.getGlyphId(0) == 0 || !expected.equals(glyphs.getFont(0).getFile())) {
+                            failures.add(row[0] + " " + row[2] + " (fixed=" + fixed + ", glyphs=" + glyphs.glyphCount() + ")");
+                        }
+                    }
+                }
+            }
+            org.json.JSONObject result = new org.json.JSONObject().put("fullyQualified", qualified).put("components", components)
+                    .put("total", total).put("typefacesChecked", 2).put("failures", new org.json.JSONArray(failures));
+            Files.write(new File(context.getExternalFilesDir(null), "emoji-set-verification.json").toPath(), result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertEquals(3944, qualified); assertEquals(9, components); assertEquals(3953, total);
+            assertTrue("Selected emoji font failed: " + failures.subList(0, Math.min(20, failures.size())), failures.isEmpty());
+            awaitLayout(scenario, R.id.preview_before);
+            scenario.onActivity(activity -> {
+                android.view.View sample = activity.findViewById(R.id.preview_before); ScrollView scroll = activity.findViewById(R.id.page_scroll);
+                int[] samplePosition = new int[2], scrollPosition = new int[2];
+                sample.getLocationInWindow(samplePosition); scroll.getLocationInWindow(scrollPosition);
+                scroll.scrollTo(0, scroll.getScrollY() + samplePosition[1] - scrollPosition[1]);
+            });
+            frame(scenario); screenshot("05-full-emoji-set.png");
+        }
+    }
+
     private static void setProgress(SeekBar slider, int value) {
         Bundle args = new Bundle(); args.putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, value);
         assertTrue(slider.performAccessibilityAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId(), args));

@@ -9,3 +9,4 @@ private-fonts/
 *.jks
 artifacts/
 .signing/
+ci-fonts/

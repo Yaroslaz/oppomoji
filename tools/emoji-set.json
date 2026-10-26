@@ -1,0 +1,9 @@
+{
+  "id": "ios-26.4-emoji-17.0",
+  "source": "https://github.com/dtingley11/KernelSU-iOS-Emoji",
+  "url": "https://raw.githubusercontent.com/dtingley11/KernelSU-iOS-Emoji/dd14ebd2db66fa4584a85876b002a6f1057dbc7f/system/fonts/NotoColorEmoji.ttf",
+  "sha256": "eba8f2686c3e2bc953da8278c03f6b24c36ac81291d233748211a8d1f377062d",
+  "bytes": 35322044,
+  "unicodeVersion": "17.0",
+  "unicodeSource": "https://www.unicode.org/Public/17.0.0/emoji/emoji-test.txt"
+}

@@ -14,4 +14,5 @@
     <item name="active_system_sample" type="id" />
     <item name="load_active_emoji" type="id" />
     <item name="export_original_emoji" type="id" />
+    <item name="download_emoji" type="id" />
 </resources>

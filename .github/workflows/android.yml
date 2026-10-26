@@ -47,9 +47,9 @@ jobs:
       - name: Name APK and record checksum
         run: |
           mkdir -p artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk artifacts/OPPOMoji-0.1.3-alpha.apk
+          cp app/build/outputs/apk/debug/app-debug.apk artifacts/OPPOMoji-0.1.4-alpha.apk
           cd artifacts
-          sha256sum OPPOMoji-0.1.3-alpha.apk > SHA256SUMS.txt
+          sha256sum OPPOMoji-0.1.4-alpha.apk > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: OPPOMoji-apk
@@ -71,6 +71,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - uses: actions/checkout@v4
+      - name: Prepare and audit the pinned full emoji set
+        run: |
+          python3 -m pip install --disable-pip-version-check fonttools==4.67.0 uharfbuzz==0.57.0 pillow==11.3.0
+          python3 tools/prepare_emoji.py --output ci-fonts/verified-emoji.ttf --report ci-fonts/coverage.json
       - uses: actions/download-artifact@v4
         with:
           pattern: '*apk'
@@ -90,9 +95,12 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048
           disable-animations: true
           script: |
-            adb install -r apks/OPPOMoji-0.1.3-alpha.apk
+            adb install -r apks/OPPOMoji-0.1.4-alpha.apk
             adb install -r apks/app-debug-androidTest.apk
+            adb shell mkdir -p /sdcard/Android/data/io.github.yaroslaz.oppomoji/files
+            adb push ci-fonts/verified-emoji.ttf /sdcard/Android/data/io.github.yaroslaz.oppomoji/files/verified-emoji.ttf
             adb shell am instrument -w io.github.yaroslaz.oppomoji.test/androidx.test.runner.AndroidJUnitRunner | tee instrumentation.txt
+            adb shell rm /sdcard/Android/data/io.github.yaroslaz.oppomoji/files/verified-emoji.ttf
             adb pull /sdcard/Android/data/io.github.yaroslaz.oppomoji/files/ screenshots
             adb logcat -d -s AndroidRuntime:E > android-runtime.txt
             python3 -c "assert 'OK (' in open('instrumentation.txt').read(), 'Instrumentation tests failed'"
@@ -111,4 +119,5 @@ jobs:
           path: |
             instrumentation.txt
             android-runtime.txt
+            ci-fonts/coverage.json
             screenshots/
