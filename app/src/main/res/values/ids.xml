@@ -11,4 +11,7 @@
     <item name="thickness_slider" type="id" />
     <item name="export_fixed_text" type="id" />
     <item name="page_scroll" type="id" />
+    <item name="active_system_sample" type="id" />
+    <item name="load_active_emoji" type="id" />
+    <item name="export_original_emoji" type="id" />
 </resources>

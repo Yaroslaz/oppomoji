@@ -115,6 +115,7 @@ final class DeviceFonts {
             active.put("underlineIsAboveBaseline", paint.getUnderlinePosition() < 0);
         } catch (RuntimeException error) { active.put("error", error.toString()); }
         report.put("activeSystemTypefaceMetrics", active);
+        report.put("systemResolvedFonts", SystemFontAccess.report());
         report.put("previewWeight", weight); report.put("underlineDepthPercent", depth);
         report.put("underlineThicknessPercent", thickness / 10.0);
         report.put("textFont", description(text)); report.put("emojiFont", description(emoji));
@@ -132,6 +133,16 @@ final class DeviceFonts {
         }
         report.put("fontConfigurations", configs);
         return report;
+    }
+
+    static String clipboardSummary(JSONObject report) throws org.json.JSONException {
+        JSONObject brief = new JSONObject(report.toString());
+        JSONObject configs = brief.optJSONObject("fontConfigurations");
+        JSONArray paths = new JSONArray();
+        if (configs != null) for (java.util.Iterator<String> keys = configs.keys(); keys.hasNext();) paths.put(keys.next());
+        brief.remove("fontConfigurations"); brief.put("fontConfigurationFiles", paths);
+        brief.put("reportFormat", "summary; full XML is in the saved JSON file");
+        return brief.toString(2);
     }
 
     static void finite(JSONObject object, String key, float value) throws org.json.JSONException {

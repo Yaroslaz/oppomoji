@@ -158,7 +158,8 @@ public class DeviceTest {
             AtomicReference<Uri> saved = new AtomicReference<>(); scenario.onActivity(activity -> saved.set(activity.lastReportUri)); uri = saved.get();
             assertNotNull(uri); assertEquals(0, picker.getHits());
             org.json.JSONObject report = new org.json.JSONObject(new String(DeviceFonts.read(context.getContentResolver().openInputStream(uri), 2 * 1024 * 1024), java.nio.charset.StandardCharsets.UTF_8));
-            assertEquals("0.1.1-alpha", report.getString("appVersion"));
+            assertEquals(BuildConfig.VERSION_NAME, report.getString("appVersion"));
+            assertTrue(report.getJSONObject("lineLayouts").getJSONObject("activeSystemSample").getJSONArray("baselineDistancesPx").length() > 0);
             CountDownLatch reportFrame = new CountDownLatch(1);
             scenario.onActivity(activity -> {
                 android.view.View decor = activity.reportDialog.getWindow().getDecorView();
@@ -186,7 +187,9 @@ public class DeviceTest {
                 SystemClock.sleep(50);
             } while (SystemClock.elapsedRealtime() < clipboardDeadline);
             assertNotNull("Copied report must be readable after the dialog closes", copied.get());
-            assertTrue(copied.get().contains("0.1.1-alpha"));
+            org.json.JSONObject summary = new org.json.JSONObject(copied.get());
+            assertEquals(BuildConfig.VERSION_NAME, summary.getString("appVersion"));
+            assertFalse(summary.has("fontConfigurations")); assertTrue(summary.has("lineLayouts"));
         } finally {
             instrumentation.removeMonitor(picker);
             if (uri != null) context.getContentResolver().delete(uri, null, null);
@@ -199,6 +202,62 @@ public class DeviceTest {
         assertTrue(report.getJSONObject("textFont").has("error"));
         DeviceFonts.finite(report, "badMetric", Float.NaN); DeviceFonts.finite(report, "badMetric2", Float.POSITIVE_INFINITY);
         assertTrue(report.isNull("badMetric")); assertTrue(report.isNull("badMetric2")); assertNotNull(report.toString(2));
+    }
+
+    @Test public void resolvesAndExportsActualSystemEmojiWithoutDocumentPicker() throws Exception {
+        android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        android.app.Instrumentation.ActivityMonitor picker = instrumentation.addMonitor(new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT), null, true);
+        Uri[] exported = {null};
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            await(scenario, "Предпросмотр готов");
+            scenario.onActivity(activity -> activity.findViewById(R.id.load_active_emoji).performClick());
+            await(scenario, "Копия emoji-шрифта готова");
+            File imported = new File(context.getFilesDir(), "emoji.ttf");
+            byte[] bytes = DeviceFonts.read(imported); SfntFont font = new SfntFont(bytes);
+            assertTrue(font.hasCodePoint(0x1f600)); assertTrue(font.hasTable("CBDT") || font.hasTable("COLR"));
+            assertEquals(0xB1B0AFBAL, SfntFont.checksum(bytes));
+            Font active = SystemFontAccess.resolve("😀");
+            Font bufferOnly = new Font.Builder(active.getBuffer().duplicate()).setTtcIndex(active.getTtcIndex()).build();
+            assertNull(bufferOnly.getFile());
+            File mapped = new File(context.getCacheDir(), "test-mapped.ttf");
+            assertArrayEquals(bytes, SystemFontAccess.copy(bufferOnly, mapped));
+            assertFalse(mapped.exists());
+            org.json.JSONObject resolved = SystemFontAccess.report();
+            assertFalse(resolved.getJSONObject("cyrillic").has("error"));
+            assertEquals(font.familyName(), resolved.getJSONObject("emoji").getJSONObject("metadata").getString("family"));
+            scenario.onActivity(activity -> activity.findViewById(R.id.export_original_emoji).performClick());
+            await(scenario, "Шрифт сохранён: Загрузки/OPPOMoji/");
+            scenario.onActivity(activity -> exported[0] = activity.lastFontUri);
+            assertNotNull(exported[0]); assertEquals(0, picker.getHits());
+            assertArrayEquals(bytes, DeviceFonts.read(context.getContentResolver().openInputStream(exported[0]), SfntFont.MAX_BYTES));
+        } finally {
+            instrumentation.removeMonitor(picker);
+            if (exported[0] != null) context.getContentResolver().delete(exported[0], null, null);
+        }
+    }
+
+    @Test public void lineDiagnosticsDistinguishPrimaryMetricsFromLocaleMinimum() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            await(scenario, "Предпросмотр готов");
+            scenario.onActivity(activity -> {
+                TextView probe = activity.findViewById(R.id.active_system_sample);
+                int width = android.view.View.MeasureSpec.makeMeasureSpec(900, android.view.View.MeasureSpec.EXACTLY);
+                int height = android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED);
+                probe.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, 100);
+                probe.setMinimumFontMetrics(null); probe.setLocalePreferredLineHeightForMinimumUsed(false);
+                probe.measure(width, height); probe.layout(0, 0, 900, probe.getMeasuredHeight());
+                int originalSpacing = probe.getLayout().getLineBaseline(1) - probe.getLayout().getLineBaseline(0);
+                Paint.FontMetrics huge = new Paint.FontMetrics(); huge.ascent = -200; huge.descent = 100; huge.top = -200; huge.bottom = 100;
+                probe.setMinimumFontMetrics(huge);
+                probe.measure(width, height); probe.layout(0, 0, 900, probe.getMeasuredHeight());
+                try {
+                    org.json.JSONObject snapshot = LineDiagnostics.snapshot(probe);
+                    assertTrue(snapshot.getJSONArray("baselineDistancesPx").getInt(0) > originalSpacing + 100);
+                    assertEquals(100, snapshot.getInt("textSizePx"));
+                    assertTrue(snapshot.has("localeMetricsAt100px"));
+                } catch (org.json.JSONException error) { throw new AssertionError(error); }
+            });
+        }
     }
 
     private static void setProgress(SeekBar slider, int value) {

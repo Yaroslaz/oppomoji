@@ -47,9 +47,9 @@ jobs:
       - name: Name APK and record checksum
         run: |
           mkdir -p artifacts
-          cp app/build/outputs/apk/debug/app-debug.apk artifacts/OPPOMoji-0.1.1-alpha.apk
+          cp app/build/outputs/apk/debug/app-debug.apk artifacts/OPPOMoji-0.1.2-alpha.apk
           cd artifacts
-          sha256sum OPPOMoji-0.1.1-alpha.apk > SHA256SUMS.txt
+          sha256sum OPPOMoji-0.1.2-alpha.apk > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: OPPOMoji-apk
@@ -90,7 +90,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048
           disable-animations: true
           script: |
-            adb install -r apks/OPPOMoji-0.1.1-alpha.apk
+            adb install -r apks/OPPOMoji-0.1.2-alpha.apk
             adb install -r apks/app-debug-androidTest.apk
             adb shell am instrument -w io.github.yaroslaz.oppomoji.test/androidx.test.runner.AndroidJUnitRunner | tee instrumentation.txt
             adb pull /sdcard/Android/data/io.github.yaroslaz.oppomoji/files/ screenshots
