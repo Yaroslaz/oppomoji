@@ -4,6 +4,8 @@ import android.os.Build;
 import android.content.Context;
 import android.graphics.Paint;
 import android.graphics.Typeface;
+import android.graphics.fonts.Font;
+import android.graphics.fonts.FontFamily;
 import android.provider.Settings;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -104,6 +106,11 @@ final class DeviceFonts {
 
     private static Object description(File file) throws Exception {
         if (!file.isFile()) return JSONObject.NULL;
-        return new JSONObject(new SfntFont(read(file)).describe());
+        JSONObject result = new JSONObject(new SfntFont(read(file)).describe());
+        Paint paint = new Paint(); paint.setTextSize(100);
+        paint.setTypeface(new Typeface.CustomFallbackBuilder(new FontFamily.Builder(new Font.Builder(file).build()).build()).build());
+        result.put("nativeUnderlinePositionAt100Px", paint.getUnderlinePosition());
+        result.put("nativeUnderlineThicknessAt100Px", paint.getUnderlineThickness());
+        return result;
     }
 }

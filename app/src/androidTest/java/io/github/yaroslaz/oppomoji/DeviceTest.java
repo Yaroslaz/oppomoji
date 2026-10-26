@@ -5,7 +5,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Paint;
+import android.graphics.Rect;
+import android.graphics.Typeface;
 import android.graphics.fonts.Font;
+import android.graphics.fonts.FontFamily;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.widget.TextView;
@@ -64,6 +67,11 @@ public class DeviceTest {
             assertEquals(0xB1B0AFBAL, SfntFont.checksum(bytes));
             assertEquals(new SfntFont(DeviceFonts.read(emoji)).colorFormat(), new SfntFont(bytes).colorFormat());
             new Font.Builder(result).build();
+            Paint nativeMetrics = new Paint(); nativeMetrics.setTextSize(100);
+            nativeMetrics.setTypeface(new Typeface.CustomFallbackBuilder(
+                    new FontFamily.Builder(new Font.Builder(result).build()).build()).build());
+            assertEquals(10f, nativeMetrics.getUnderlinePosition(), 0.5f);
+            assertEquals(4f, nativeMetrics.getUnderlineThickness(), 0.5f);
             scenario.onActivity(activity -> {
                 assertTrue(((Button) activity.findViewById(R.id.export_font)).isEnabled());
                 Paint paint = new Paint(); paint.setTypeface(((TextView) activity.findViewById(R.id.preview_after)).getTypeface());
@@ -71,6 +79,12 @@ public class DeviceTest {
             });
             scenario.recreate(); await(scenario, "Копия emoji-шрифта готова");
             screenshot("02-imported.png");
+            scenario.onActivity(activity -> {
+                android.view.View input = activity.findViewById(R.id.input_after);
+                input.requestRectangleOnScreen(new Rect(0, 0, input.getWidth(), input.getHeight()), true);
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            screenshot("03-input-underlines.png");
 
             File invalid = new File(context.getCacheDir(), "invalid.ttf"); Files.write(invalid.toPath(), new byte[12]);
             scenario.onActivity(activity -> activity.onActivityResult(11, Activity.RESULT_OK, new Intent().setData(Uri.fromFile(invalid))));
