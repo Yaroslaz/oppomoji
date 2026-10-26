@@ -28,6 +28,17 @@ final class LineDiagnostics {
         result.put("elegantTextHeight", view.getPaint().isElegantTextHeight());
         Paint paint = new Paint(view.getPaint()); paint.setTextSize(100);
         result.put("metricsAt100px", metrics(paint.getFontMetrics()));
+        if (Build.VERSION.SDK_INT >= 31) {
+            JSONObject sources = new JSONObject();
+            for (String[] sample : new String[][]{{"cyrillic", "Я"}, {"emoji", "😀"}}) {
+                try {
+                    android.graphics.fonts.Font font = SystemFontAccess.resolve(sample[1], paint);
+                    sources.put(sample[0], new JSONObject().put("file", font.getFile() == null ? JSONObject.NULL : font.getFile().getAbsolutePath())
+                            .put("ttcIndex", font.getTtcIndex()));
+                } catch (java.io.IOException | RuntimeException error) { sources.put(sample[0], new JSONObject().put("error", error.toString())); }
+            }
+            result.put("resolvedFonts", sources);
+        }
         if (Build.VERSION.SDK_INT >= 35) {
             result.put("localePreferredMinimum", view.isLocalePreferredLineHeightForMinimumUsed());
             Paint.FontMetrics minimum = view.getMinimumFontMetrics();

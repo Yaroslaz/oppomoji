@@ -16,11 +16,24 @@ import java.nio.file.StandardOpenOption;
 /** Resolves fonts used for fixed test characters, rather than guessing from filenames. */
 final class SystemFontAccess {
     static Font resolve(String sample) throws IOException {
-        if (Build.VERSION.SDK_INT < 31) throw new IOException("Чтение активного шрифта доступно с Android 12");
         Paint paint = new Paint(); paint.setTypeface(Typeface.DEFAULT); paint.setTextSize(100);
+        return resolve(sample, paint);
+    }
+
+    static Font resolve(String sample, Paint paint) throws IOException {
+        if (Build.VERSION.SDK_INT < 31) throw new IOException("Чтение активного шрифта доступно с Android 12");
         PositionedGlyphs glyphs = TextRunShaper.shapeTextRun(sample, 0, sample.length(), 0, sample.length(), 0, 0, false, paint);
         if (glyphs.glyphCount() == 0 || glyphs.getGlyphId(0) == 0) throw new IOException("Система не нашла глиф для тестового символа");
         return glyphs.getFont(0);
+    }
+
+    static String familyName(Font font) {
+        File file = font.getFile();
+        if (file != null && file.canRead()) {
+            try (FontFile source = new FontFile(file)) { return source.metadata(font.getTtcIndex()).familyName(); }
+            catch (IOException | RuntimeException ignored) { /* The native Font remains usable without metadata. */ }
+        }
+        return "Активный системный emoji-шрифт";
     }
 
     static JSONObject report() throws Exception {

@@ -121,6 +121,11 @@ public class DeviceTest {
         assertTrue(DeviceFonts.isOppoSans("OPPO Sans", "OppoSerifCollection.ttc"));
         assertTrue(DeviceFonts.isOppoSans("OPlus Sans", "generic.ttf"));
         assertFalse(DeviceFonts.isOppoSans("Roboto", "Roboto.ttf"));
+        assertFalse(DeviceFonts.isOppoSans("OPlus Sans Solid Digits VF", "OSans-Solid-Digits-VF.ttf"));
+        assertFalse(DeviceFonts.isOppoSans("OPlus Sans Solid Digits VF", "OPPOSans.ttf"));
+        DeviceFonts.Candidate en = new DeviceFonts.Candidate(new File("SysSans-En-Regular.ttf"), 0, "OPPO Sans 4.0 EN", true);
+        DeviceFonts.Candidate sc = new DeviceFonts.Candidate(new File("SysFont-Hans-Regular.ttf"), 0, "OPPO Sans 4.0 SC", true);
+        assertTrue(DeviceFonts.priority(en) < DeviceFonts.priority(sc));
     }
 
     @Test public void slidersChangeNativeTextMetricsWithoutImportingEmoji() throws Exception {
@@ -261,6 +266,61 @@ public class DeviceTest {
                     assertTrue(snapshot.has("localeMetricsAt100px"));
                 } catch (org.json.JSONException error) { throw new AssertionError(error); }
             });
+        }
+    }
+
+    @Test public void customTextUsesActiveEmojiWithoutImportAndExplicitImportTakesPrecedence() throws Exception {
+        File systemEmoji = new File("/system/fonts/NotoColorEmoji.ttf");
+        SfntFont original = new SfntFont(DeviceFonts.read(systemEmoji));
+        File simulated = new File(context.getCacheDir(), "active-replacement-emoji.ttf");
+        Files.write(simulated.toPath(), original.withUnderline(-original.unitsPerEm() / 2, 90));
+        Font replacement = new Font.Builder(simulated).build();
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            await(scenario, "Предпросмотр готов");
+            scenario.onActivity(activity -> activity.activeSystemEmoji = replacement);
+            scenario.onActivity(activity -> activity.onActivityResult(10, Activity.RESULT_OK, new Intent().setData(Uri.fromFile(roboto()))));
+            await(scenario, "Копия текстового шрифта готова");
+            scenario.onActivity(activity -> {
+                for (int id : new int[]{R.id.preview_before, R.id.preview_after, R.id.input_before, R.id.input_after}) {
+                    try {
+                        TextView view = activity.findViewById(id);
+                        assertEquals(simulated, SystemFontAccess.resolve("😀", view.getPaint()).getFile());
+                        File text = SystemFontAccess.resolve("Я", view.getPaint()).getFile();
+                        assertTrue(text.getName().equals("text.ttf") || text.getName().equals("text-repaired.ttf"));
+                        org.json.JSONObject snapshot = LineDiagnostics.snapshot(view);
+                        assertEquals(simulated.getAbsolutePath(), snapshot.getJSONObject("resolvedFonts").getJSONObject("emoji").getString("file"));
+                    } catch (Exception error) { throw new AssertionError(error); }
+                }
+                assertFalse(activity.findViewById(R.id.export_font).isEnabled());
+            });
+            assertFalse(new File(context.getFilesDir(), "emoji.ttf").exists());
+            scenario.onActivity(activity -> activity.onActivityResult(11, Activity.RESULT_OK, new Intent().setData(Uri.fromFile(systemEmoji))));
+            await(scenario, "Копия текстового шрифта готова");
+            scenario.onActivity(activity -> {
+                try {
+                    TextView before = activity.findViewById(R.id.preview_before), after = activity.findViewById(R.id.preview_after);
+                    assertEquals(new File(context.getFilesDir(), "emoji.ttf"), SystemFontAccess.resolve("😀", before.getPaint()).getFile());
+                    assertEquals(new File(context.getFilesDir(), "emoji-repaired.ttf"), SystemFontAccess.resolve("😀", after.getPaint()).getFile());
+                } catch (Exception error) { throw new AssertionError(error); }
+            });
+        }
+    }
+
+    @Test public void oldDigitsOnlySelectionIsRemovedBeforeNativePreview() throws Exception {
+        // A metadata-only fixture must be rejected before Android tries to render it as a body font.
+        java.util.Map<String, byte[]> tables = new java.util.LinkedHashMap<>();
+        byte[] head = new byte[54]; java.nio.ByteBuffer.wrap(head).putInt(12, 0x5F0F3CF5).putShort(18, (short) 1000);
+        tables.put("head", head);
+        byte[] family = "OPlus Sans Solid Digits VF".getBytes(java.nio.charset.StandardCharsets.UTF_16BE);
+        java.nio.ByteBuffer name = java.nio.ByteBuffer.allocate(18 + family.length);
+        name.putShort((short) 0).putShort((short) 1).putShort((short) 18);
+        name.putShort((short) 3).putShort((short) 1).putShort((short) 0x409).putShort((short) 16).putShort((short) family.length).putShort((short) 0).put(family);
+        tables.put("name", name.array());
+        File selected = new File(context.getFilesDir(), "text.ttf"); Files.write(selected.toPath(), SfntFont.pack(0x00010000, tables));
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            await(scenario, "Предпросмотр готов");
+            assertFalse(selected.exists()); // The AOSP emulator has no replacement OPPO Sans.
+            scenario.onActivity(activity -> assertFalse(activity.findViewById(R.id.weight_slider).isEnabled()));
         }
     }
 

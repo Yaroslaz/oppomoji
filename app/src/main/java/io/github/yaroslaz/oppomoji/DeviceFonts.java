@@ -36,10 +36,14 @@ final class DeviceFonts {
 
     static boolean isOppoSans(String family, String filename) {
         String internal = family.toLowerCase(Locale.ROOT);
-        if (internal.contains("serif")) return false;
+        if (internal.contains("serif") || isDigitsFont(family)) return false;
         if (sansName(internal)) return true;
         String file = filename.toLowerCase(Locale.ROOT);
-        return !file.contains("serif") && sansName(file);
+        return !file.contains("serif") && !isDigitsFont(filename) && sansName(file);
+    }
+
+    static boolean isDigitsFont(String name) {
+        return name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "").contains("soliddigits");
     }
 
     private static boolean sansName(String value) {
@@ -75,10 +79,12 @@ final class DeviceFonts {
         return found;
     }
 
-    private static int priority(Candidate font) {
-        String name = (font.family + font.file.getName()).toLowerCase(Locale.ROOT);
-        return (font.cyrillic ? 0 : 100) + (name.contains("opposans") ? 0 : 10) + (name.contains("vf") || name.contains("variable") ? 0 : 3)
-                + (name.contains("cjk") || name.contains("sc-") ? 20 : 0);
+    static int priority(Candidate font) {
+        String name = (font.family + " " + font.file.getName()).toLowerCase(Locale.ROOT);
+        boolean english = name.matches(".*(?:[ ._-]en[ ._-]|[ ._-]en$).*"),
+                cjk = name.contains("cjk") || name.contains("hans") || name.contains("hant") || name.matches(".*[ ._-](?:sc|tc)(?:[ ._-]|$).*" );
+        return (font.cyrillic ? 0 : 1000) + (english ? 0 : 30) + (cjk ? 50 : 0)
+                + (name.replace(" ", "").contains("opposans") ? 0 : 10);
     }
 
     static byte[] read(InputStream input, int limit) throws IOException {

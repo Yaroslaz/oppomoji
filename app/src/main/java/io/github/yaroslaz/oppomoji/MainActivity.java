@@ -66,6 +66,8 @@ public final class MainActivity extends Activity {
     private EditText inputBefore, inputAfter;
     private TextView systemSample;
     private Typeface interfaceTypeface = Typeface.DEFAULT;
+    Font activeSystemEmoji;
+    private String activeSystemEmojiName, activeSystemEmojiError;
     private SfntFont.Axis weightAxis;
     private String textName, emojiName;
     private int weight, depth, thickness;
@@ -89,9 +91,24 @@ public final class MainActivity extends Activity {
         weight = prefs.getInt("weight", 500); depth = prefs.getInt("depth", 10); thickness = prefs.getInt("thickness", 40);
         buildUi();
         task("Проверяю сохранённые шрифты…", () -> {
+            if (Build.VERSION.SDK_INT >= 31) {
+                try { activeSystemEmoji = SystemFontAccess.resolve("😀"); activeSystemEmojiName = SystemFontAccess.familyName(activeSystemEmoji); }
+                catch (IOException | RuntimeException error) { activeSystemEmojiError = error.getMessage(); }
+            }
+            boolean replaceDigits = false;
             if (textFile.isFile()) {
                 try (FontFile source = new FontFile(textFile)) {
-                    SfntFont info = source.metadata(0); weightAxis = info.weightAxis(); textSupportsCyrillic = supportsCyrillic(info);
+                    SfntFont info = source.metadata(0); replaceDigits = DeviceFonts.isDigitsFont(info.familyName());
+                    if (!replaceDigits) { weightAxis = info.weightAxis(); textSupportsCyrillic = supportsCyrillic(info); }
+                }
+            }
+            if (replaceDigits) {
+                DeviceFonts.Candidate replacement = null;
+                for (DeviceFonts.Candidate font : DeviceFonts.candidates()) if (font.cyrillic) { replacement = font; break; }
+                if (replacement != null) importSystemText(replacement);
+                else {
+                    Files.deleteIfExists(textFile.toPath()); Files.deleteIfExists(repairedTextFile.toPath());
+                    weightAxis = null; textName = "Нужен OPPO Sans: служебный шрифт цифр исключён"; savePreferences();
                 }
             }
             return makePreview();
@@ -141,7 +158,7 @@ public final class MainActivity extends Activity {
             weightAxis = null; textName = "Активный системный шрифт"; savePreferences(); return makePreview();
         })));
         emojiStatus = label(emojiName, 15, WHITE); space(emojiStatus, 18); sources.addView(emojiStatus);
-        sources.addView(label("Открой распакованный emoji-шрифт для Android. Изображения iOS в приложение не включены.", 13, MUTED));
+        sources.addView(label("Без импорта примеры используют активные системные эмодзи (Android 12+). Для редактирования и экспорта прочитай их кнопкой ниже или открой свой TTF/OTF.", 13, MUTED));
         sources.addView(button("Открыть файл эмодзи", v -> importFont(IMPORT_EMOJI)));
         Button activeEmoji = button("Взять активный emoji-шрифт из системы", v -> loadActiveEmoji());
         activeEmoji.setId(R.id.load_active_emoji); sources.addView(activeEmoji);
@@ -289,6 +306,7 @@ public final class MainActivity extends Activity {
         task("Сохраняю отчёт…", () -> {
             JSONObject report = DeviceFonts.report(this, textFile, emojiFile, repairedFile, weight, depth, thickness);
             report.put("lineLayouts", layouts);
+            report.put("previewEmojiSource", emojiFile.isFile() ? "imported-file" : activeSystemEmoji != null ? "active-system-font" : "system-fallback");
             String json = report.toString(2), brief = DeviceFonts.clipboardSummary(report);
             byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
             String name = "OPPOMoji-report-" + System.currentTimeMillis() + ".json";
@@ -351,6 +369,9 @@ public final class MainActivity extends Activity {
                     Files.write(temporary.toPath(), bytes);
                 }
                 SfntFont info = new SfntFont(bytes); info.axes();
+                if (request == IMPORT_TEXT && DeviceFonts.isDigitsFont(info.familyName())) {
+                    throw new IOException("Это служебный шрифт цифр. Выбери OPPO Sans 4.0 EN для букв и кириллицы");
+                }
                 new Font.Builder(temporary).build();
                 if (request == IMPORT_TEXT) {
                     Files.move(temporary.toPath(), textFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
@@ -424,18 +445,21 @@ public final class MainActivity extends Activity {
 
     private void loadSystemFont(DeviceFonts.Candidate source) {
         task("Проверяю OPPO Sans…", () -> {
-            byte[] bytes;
-            try (FontFile font = new FontFile(source.file)) { bytes = font.extract(source.index); }
-            SfntFont info = new SfntFont(bytes); SfntFont.Axis axis = info.weightAxis();
-            File temporary = new File(getCacheDir(), "system-import.ttf");
-            Files.write(temporary.toPath(), bytes);
-            new Font.Builder(temporary).build();
-            Files.move(temporary.toPath(), textFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            weightAxis = axis; textName = info.familyName() + " · " + source.file.getName();
-            textSupportsCyrillic = supportsCyrillic(info);
-            if (axis != null) weight = Math.round(Math.max(axis.min, Math.min(axis.max, weight)));
-            savePreferences(); return makePreview();
+            importSystemText(source); return makePreview();
         });
+    }
+
+    private void importSystemText(DeviceFonts.Candidate source) throws Exception {
+        byte[] bytes;
+        try (FontFile font = new FontFile(source.file)) { bytes = font.extract(source.index); }
+        SfntFont info = new SfntFont(bytes); SfntFont.Axis axis = info.weightAxis();
+        File temporary = new File(getCacheDir(), "system-import.ttf"); Files.write(temporary.toPath(), bytes);
+        new Font.Builder(temporary).build();
+        Files.move(temporary.toPath(), textFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        weightAxis = axis; textName = info.familyName() + " · " + source.file.getName();
+        textSupportsCyrillic = supportsCyrillic(info);
+        if (axis != null) weight = Math.round(Math.max(axis.min, Math.min(axis.max, weight)));
+        savePreferences();
     }
 
     private void useTextMetrics() {
@@ -469,7 +493,9 @@ public final class MainActivity extends Activity {
                 if (Build.VERSION.SDK_INT >= 35) view.setLocalePreferredLineHeightForMinimumUsed(false);
             }
             textStatus.setText(textFile.isFile() ? textName + (textSupportsCyrillic ? "" : " · нет кириллицы: русские буквы из системного шрифта") : "Активный системный шрифт · OPPO Sans пока не подтверждён");
-            emojiStatus.setText(emojiFile.isFile() ? emojiName : "Системные эмодзи · файл ещё не выбран");
+            emojiStatus.setText(emojiFile.isFile() ? emojiName : activeSystemEmoji != null
+                    ? activeSystemEmojiName + " · из системы, подключены к примерам. Для экспорта нажми «Взять активный emoji-шрифт»."
+                    : "Активные эмодзи недоступны для выбранного Sans: " + (activeSystemEmojiError == null ? "открой TTF/OTF или используй системный шрифт текста" : activeSystemEmojiError));
             if (weightAxis != null) {
                 int min = Math.max(1, (int) Math.ceil(weightAxis.min));
                 int max = Math.min(1000, (int) Math.floor(weightAxis.max));
@@ -525,7 +551,8 @@ public final class MainActivity extends Activity {
         FontFamily textFamily = new FontFamily.Builder(text.build()).build();
         Typeface.CustomFallbackBuilder family = new Typeface.CustomFallbackBuilder(textFamily).setSystemFallback("sans-serif");
         if (weightAxis != null) family.setStyle(new FontStyle(Math.max(1, Math.min(1000, requestedWeight)), FontStyle.FONT_SLANT_UPRIGHT));
-        if (emoji.isFile()) family.addCustomFallback(new FontFamily.Builder(new Font.Builder(emoji).build()).build());
+        Font emojiFont = emoji.isFile() ? new Font.Builder(emoji).build() : activeSystemEmoji;
+        if (emojiFont != null) family.addCustomFallback(new FontFamily.Builder(emojiFont).build());
         return family.build();
     }
 
