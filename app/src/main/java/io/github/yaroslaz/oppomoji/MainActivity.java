@@ -230,7 +230,7 @@ public final class MainActivity extends Activity {
     private TextView sample() {
         TextView view = label("", 19, WHITE);
         interfaceText.remove(view);
-        String copy = "Съешь ещё этих мягких булок.\nПодчёркнутый текст: руфдцщ 😀\nПривет 👋 ☺️ ❤️ 😶‍🌫️ 🙂‍↕️ 🙂‍↔️\nНовое: 🫪 🫍 🧑‍🩰 🫯\nСемья 👨‍👩‍👧‍👦 · флаг 🇷🇺\nСледующая строка без наложений?";
+        String copy = "Съешь ещё этих мягких булок.\nПодчёркнутый текст: руфдцщ 😀\nПривет 👋 ☺️ ❤️ 😶‍🌫️ 🙂‍↕️ 🙂‍↔️\nСимволы ©️ ™️ ⁉️ #️⃣ 1️⃣\nНовое: 🫪 🫍 🧑‍🩰 🫯\nСемья 👨‍👩‍👧‍👦 · флаг 🇷🇺\nСледующая строка без наложений?";
         SpannableString styled = new SpannableString(copy);
         int start = copy.indexOf("Подчёркнутый");
         styled.setSpan(new UnderlineSpan(), start, copy.indexOf('\n', start), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);

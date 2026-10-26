@@ -78,6 +78,6 @@ CI проверяет редактор на повреждённых/перек�
 python tools/prepare_emoji.py --output ci-fonts/verified-emoji.ttf --report ci-fonts/coverage.json
 ```
 
-Android-тест получает подготовленный файл в `getExternalFilesDir()/verified-emoji.ttf` и проверяет каждую запись в исходном и исправленном предпросмотрах: один ненулевой глиф, отрисованный именно выбранным файлом, без подстановки системного Noto. Unicode-список в `app/src/main/assets/` сопровождается Unicode License V3. Это проверка рендеринга и покрытия, а не доказательство происхождения каждого отдельного рисунка.
+Android-тест получает подготовленный файл в `getExternalFilesDir()/verified-emoji.ttf` и проверяет каждую запись в исходном и исправленном предпросмотрах: один видимый ненулевой глиф, отрисованный именно выбранным файлом, без подстановки системного Noto. Служебные глифы без видимой области записываются отдельно: наличие такого глифа само по себе не означает распад эмодзи. Unicode-список в `app/src/main/assets/` сопровождается Unicode License V3. Это проверка рендеринга и покрытия, а не доказательство происхождения каждого отдельного рисунка.
 
 Источники: [системные шрифты AOSP](https://source.android.com/docs/core/fonts/custom-font-fallback), [Android CustomFallbackBuilder](https://developer.android.com/reference/android/graphics/Typeface.CustomFallbackBuilder), [таблица OpenType post](https://learn.microsoft.com/en-us/typography/opentype/spec/post), [совместимость zFont](https://zfont.app/help).

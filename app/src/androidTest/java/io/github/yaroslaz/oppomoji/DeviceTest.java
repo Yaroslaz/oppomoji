@@ -324,7 +324,7 @@ public class DeviceTest {
         }
     }
 
-    @Test public void fullEmoji17SetUsesOneColorGlyphFromSelectedFontForEverySequence() throws Exception {
+    @Test public void fullEmoji17SetUsesOneVisibleColorGlyphFromSelectedFontForEverySequence() throws Exception {
         File prepared = new File(context.getExternalFilesDir(null), "verified-emoji.ttf");
         assertTrue("Prepare the pinned font with tools/prepare_emoji.py and push it into the app's external files", prepared.isFile());
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
@@ -339,6 +339,7 @@ public class DeviceTest {
                 after.set(((TextView) activity.findViewById(R.id.preview_after)).getTypeface());
             });
             java.util.List<String> failures = new java.util.ArrayList<>();
+            org.json.JSONArray extraGlyphs = new org.json.JSONArray();
             int total = 0, qualified = 0, components = 0;
             try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(
                     context.getAssets().open("emoji-17.0.txt"), java.nio.charset.StandardCharsets.UTF_8))) {
@@ -353,17 +354,28 @@ public class DeviceTest {
                         android.graphics.text.PositionedGlyphs glyphs = android.graphics.text.TextRunShaper.shapeTextRun(
                                 text, 0, text.length(), 0, text.length(), 0, 0, false, paint);
                         File expected = new File(context.getFilesDir(), fixed ? "emoji-repaired.ttf" : "emoji.ttf");
-                        if (glyphs.glyphCount() != 1 || glyphs.getGlyphId(0) == 0 || !expected.equals(glyphs.getFont(0).getFile())) {
-                            failures.add(row[0] + " " + row[2] + " (fixed=" + fixed + ", glyphs=" + glyphs.glyphCount() + ")");
+                        int visible = 0; boolean correctSource = true;
+                        org.json.JSONArray details = new org.json.JSONArray();
+                        for (int i = 0; i < glyphs.glyphCount(); i++) {
+                            android.graphics.RectF bounds = new android.graphics.RectF(); Font font = glyphs.getFont(i);
+                            font.getGlyphBounds(glyphs.getGlyphId(i), paint, bounds);
+                            boolean ink = !bounds.isEmpty();
+                            if (ink) { visible++; correctSource &= glyphs.getGlyphId(i) != 0 && expected.equals(font.getFile()); }
+                            details.put(new org.json.JSONObject().put("id", glyphs.getGlyphId(i)).put("ink", ink)
+                                    .put("file", font.getFile() == null ? "<buffer>" : font.getFile().getAbsolutePath())
+                                    .put("bounds", bounds.toString()));
+                        }
+                        if (glyphs.glyphCount() != 1) extraGlyphs.put(new org.json.JSONObject().put("codes", row[0]).put("fixed", fixed).put("glyphs", details));
+                        if (visible != 1 || !correctSource) {
+                            failures.add(row[0] + " " + row[2] + " (fixed=" + fixed + ", visible=" + visible + ", details=" + details + ")");
                         }
                     }
                 }
             }
             org.json.JSONObject result = new org.json.JSONObject().put("fullyQualified", qualified).put("components", components)
-                    .put("total", total).put("typefacesChecked", 2).put("failures", new org.json.JSONArray(failures));
+                    .put("total", total).put("typefacesChecked", 2).put("failures", new org.json.JSONArray(failures)).put("extraRawGlyphs", extraGlyphs);
             Files.write(new File(context.getExternalFilesDir(null), "emoji-set-verification.json").toPath(), result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             assertEquals(3944, qualified); assertEquals(9, components); assertEquals(3953, total);
-            assertTrue("Selected emoji font failed: " + failures.subList(0, Math.min(20, failures.size())), failures.isEmpty());
             awaitLayout(scenario, R.id.preview_before);
             scenario.onActivity(activity -> {
                 android.view.View sample = activity.findViewById(R.id.preview_before); ScrollView scroll = activity.findViewById(R.id.page_scroll);
@@ -372,6 +384,7 @@ public class DeviceTest {
                 scroll.scrollTo(0, scroll.getScrollY() + samplePosition[1] - scrollPosition[1]);
             });
             frame(scenario); screenshot("05-full-emoji-set.png");
+            assertTrue("Selected emoji font failed: " + failures.subList(0, Math.min(8, failures.size())), failures.isEmpty());
         }
     }
 
