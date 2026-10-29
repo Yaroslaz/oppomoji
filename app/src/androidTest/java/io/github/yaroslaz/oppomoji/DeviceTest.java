@@ -38,7 +38,7 @@ public class DeviceTest {
     private Context context;
     @Before public void cleanImports() throws Exception {
         context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        for (String name : new String[]{"text.ttf", "text-repaired.ttf", "emoji.ttf", "emoji-repaired.ttf"}) {
+        for (String name : new String[]{"text.ttf", "text-repaired.ttf", "emoji.ttf", "emoji-repaired.ttf", "emoji-slot.ttf", "sans-slot.ttf"}) {
             Files.deleteIfExists(new File(context.getFilesDir(), name).toPath());
         }
         context.getSharedPreferences("fonts", Context.MODE_PRIVATE).edit().clear().commit();
@@ -390,16 +390,16 @@ public class DeviceTest {
         }
     }
 
-    @Test public void oneTapBuildsOneSansAndEmojiFontForTheDaiSlot() throws Exception {
+    @Test public void oneTapBuildsEmojiSlotFontThatLeavesVisibleTextToTheSystem() throws Exception {
         File prepared = new File(context.getExternalFilesDir(null), "verified-emoji.ttf");
         assertTrue("Prepare the pinned font with tools/prepare_emoji.py and push it into the app's external files", prepared.isFile());
         // As if the verified download already finished; the network step itself is covered by SHA-256 in EmojiSource.
         Files.copy(prepared.toPath(), new File(context.getFilesDir(), "emoji.ttf").toPath());
-        context.getSharedPreferences("fonts", Context.MODE_PRIVATE).edit().putBoolean("verifiedEmoji", true).putInt("weight", 700).commit();
+        context.getSharedPreferences("fonts", Context.MODE_PRIVATE).edit().putBoolean("verifiedEmoji", true).commit();
         android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
         android.app.Instrumentation.ActivityMonitor picker = instrumentation.addMonitor(new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT), null, true);
         Uri[] exported = {null};
-        File combo = new File(context.getFilesDir(), "combo.ttf");
+        File slot = new File(context.getFilesDir(), "emoji-slot.ttf");
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             await(scenario, "Копия emoji-шрифта готова");
             scenario.onActivity(activity -> activity.onActivityResult(10, Activity.RESULT_OK, new Intent().setData(Uri.fromFile(roboto()))));
@@ -412,34 +412,30 @@ public class DeviceTest {
             assertNotNull(exported[0]); assertEquals(0, picker.getHits());
             SfntFont text = new SfntFont(DeviceFonts.read(roboto()));
             SfntFont font = new SfntFont(DeviceFonts.read(context.getContentResolver().openInputStream(exported[0]), SfntFont.MAX_BYTES));
-            assertTrue(font.hasTable("CBDT") && font.hasTable("CBLC") && font.hasTable("glyf"));
-            assertFalse("The weight is baked in", font.hasTable("fvar") || font.hasTable("gvar"));
-            assertEquals(text.unitsPerEm(), font.unitsPerEm());
+            assertTrue(font.hasTable("CBDT")); assertFalse(font.hasTable("glyf"));
+            for (int cp : new int[]{' ', '1', '#', '.', 'A', 0xA9}) assertFalse("U+" + Integer.toHexString(cp), font.hasCodePoint(cp));
+            assertTrue(font.hasVariationSequence('1', 0xFE0F)); assertTrue(font.hasVariationSequence(0xA9, 0xFE0F));
             int depth = Math.max(2, Math.min(25, Math.round(-text.underlinePosition() * 100f / text.unitsPerEm())));
             assertEquals(-Math.round(depth * font.unitsPerEm() / 100f), font.underlinePosition());
-            assertTrue(font.hasVariationSequence(0xA9, 0xFE0F)); assertEquals(0xB1B0AFBAL, SfntFont.checksum(DeviceFonts.read(combo)));
-            int textGlyphs = ComboFont.glyphCount(new SfntFont(VariableInstancer.instantiate(text, VariableInstancer.location("wght", 700f))));
-            assertEquals("", ComboFont.textAsEmoji(combo, textGlyphs, text));
-            // The baked weight matches Android's own rendering of the variable font at wght 700.
-            Paint baked = new Paint(); baked.setTextSize(100); baked.setTypeface(ComboFont.typeface(combo));
-            Paint variable = new Paint(); variable.setTextSize(100);
-            variable.setTypeface(new Typeface.CustomFallbackBuilder(new FontFamily.Builder(new Font.Builder(roboto()).setFontVariationSettings("'wght' 700").build()).build()).build());
-            Paint regular = new Paint(); regular.setTextSize(100);
-            regular.setTypeface(new Typeface.CustomFallbackBuilder(new FontFamily.Builder(new Font.Builder(roboto()).setFontVariationSettings("'wght' 400").build()).build()).build());
-            String word = "Шрифт OPPO 123";
-            assertEquals(variable.measureText(word), baked.measureText(word), 1.5f);
-            assertTrue(baked.measureText(word) > regular.measureText(word) + 2);
+            assertEquals("", SlotFont.problems(slot, true));
+            // Independently of the app: draw through "slot first, then the system", as the Dai slot does.
+            Paint paint = new Paint(); paint.setTextSize(48); paint.setTypeface(SlotFont.typeface(slot));
+            for (String plain : new String[]{"1", "A", "Я", ".", "\u00A9", "#"}) {
+                assertTrue(plain + " must be visible", ink(paint, plain));
+                assertNotEquals(plain, slot, drawnBy(paint, plain));
+            }
+            for (String emoji : new String[]{"1\uFE0F\u20E3", "\u00A9\uFE0F", "❤️‍🔥", "🙂‍↕️", "👨‍👩‍👧‍👦"}) {
+                assertTrue(emoji + " must be visible", ink(paint, emoji));
+                assertEquals(emoji, slot, drawnBy(paint, emoji));
+            }
+            // A space from the system font is narrow; the emoji font's own space was 1.25 em.
+            assertTrue(paint.measureText(" ") < paint.getTextSize() * 0.5f);
             scenario.onActivity(activity -> {
                 try {
-                    TextView before = activity.findViewById(R.id.preview_before), after = activity.findViewById(R.id.preview_after);
-                    assertEquals(new File(context.getFilesDir(), "emoji.ttf"), SystemFontAccess.resolve("😀", before.getPaint()).getFile());
-                    for (String emoji : new String[]{"👨‍👩‍👧‍👦", "\u00A9\uFE0F", "1\uFE0F\u20E3", "❤️‍🔥"}) assertGlyph(after.getPaint(), emoji, combo, textGlyphs, true);
-                    // In the slot this file is primary: letters, digits, spaces and punctuation must stay text glyphs.
-                    for (String plain : new String[]{"1", "\u00A9", "A", "Я", ".", " "}) assertGlyph(after.getPaint(), plain, combo, textGlyphs, false);
+                    TextView showcase = activity.findViewById(R.id.emoji_showcase);
+                    assertEquals(slot, SystemFontAccess.resolve("😀", showcase.getPaint()).getFile());
                     String coverage = ((TextView) activity.findViewById(R.id.emoji_coverage)).getText().toString();
                     assertTrue(coverage, coverage.contains("3953 из 3953"));
-                    TextView showcase = activity.findViewById(R.id.emoji_showcase);
-                    assertEquals(combo, SystemFontAccess.resolve("😀", showcase.getPaint()).getFile());
                 } catch (java.io.IOException error) { throw new AssertionError(error); }
             });
             awaitLayout(scenario, R.id.emoji_showcase); frame(scenario); screenshot("06-one-tap.png");
@@ -449,11 +445,46 @@ public class DeviceTest {
         }
     }
 
-    private static void assertGlyph(Paint paint, String text, File file, int textGlyphs, boolean emoji) {
+    @Test public void textSlotFontIsStaticVisibleAndBakedAtTheChosenWeight() throws Exception {
+        context.getSharedPreferences("fonts", Context.MODE_PRIVATE).edit().putInt("weight", 700).commit();
+        Uri[] exported = {null};
+        File sans = new File(context.getFilesDir(), "sans-slot.ttf");
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            await(scenario, "Предпросмотр готов");
+            scenario.onActivity(activity -> activity.onActivityResult(10, Activity.RESULT_OK, new Intent().setData(Uri.fromFile(roboto()))));
+            await(scenario, "Копия текстового шрифта готова");
+            scenario.onActivity(activity -> activity.findViewById(R.id.export_sans).performClick());
+            await(scenario, "Готово: Загрузки/OPPOMoji/", 60000);
+            scenario.onActivity(activity -> exported[0] = activity.lastFontUri);
+            SfntFont font = new SfntFont(DeviceFonts.read(context.getContentResolver().openInputStream(exported[0]), SfntFont.MAX_BYTES));
+            assertTrue(font.hasTable("glyf")); assertFalse(font.hasTable("fvar") || font.hasTable("gvar") || font.hasTable("CBDT"));
+            assertEquals("", SlotFont.problems(sans, false));
+            Paint baked = new Paint(); baked.setTextSize(100); baked.setTypeface(SlotFont.typeface(sans));
+            Paint variable = new Paint(); variable.setTextSize(100);
+            variable.setTypeface(new Typeface.CustomFallbackBuilder(new FontFamily.Builder(new Font.Builder(roboto()).setFontVariationSettings("'wght' 700").build()).build()).build());
+            Paint regular = new Paint(); regular.setTextSize(100);
+            regular.setTypeface(new Typeface.CustomFallbackBuilder(new FontFamily.Builder(new Font.Builder(roboto()).setFontVariationSettings("'wght' 400").build()).build()).build());
+            String word = "Шрифт OPPO 123";
+            assertTrue(ink(baked, word));
+            assertEquals(variable.measureText(word), baked.measureText(word), 1.5f);
+            assertTrue(baked.measureText(word) > regular.measureText(word) + 2);
+        } finally {
+            if (exported[0] != null) context.getContentResolver().delete(exported[0], null, null);
+        }
+    }
+
+    /** Draws the text and reports whether any pixel was painted. */
+    private static boolean ink(Paint paint, String text) {
+        Bitmap bitmap = Bitmap.createBitmap(400, 120, Bitmap.Config.ARGB_8888);
+        new android.graphics.Canvas(bitmap).drawText(text, 10, 90, paint);
+        int[] pixels = new int[400 * 120]; bitmap.getPixels(pixels, 0, 400, 0, 0, 400, 120); bitmap.recycle();
+        for (int pixel : pixels) if ((pixel >>> 24) > 32) return true;
+        return false;
+    }
+
+    private static File drawnBy(Paint paint, String text) {
         android.graphics.text.PositionedGlyphs glyphs = android.graphics.text.TextRunShaper.shapeTextRun(text, 0, text.length(), 0, text.length(), 0, 0, false, paint);
-        assertTrue(text, glyphs.glyphCount() >= 1);
-        assertEquals(text, file, glyphs.getFont(0).getFile());
-        assertEquals(text + " glyph " + glyphs.getGlyphId(0), emoji, glyphs.getGlyphId(0) >= textGlyphs);
+        return glyphs.glyphCount() == 0 ? null : glyphs.getFont(0).getFile();
     }
 
     /** Returns the glyph count when exactly one visible glyph comes from the expected file, otherwise -1. */
