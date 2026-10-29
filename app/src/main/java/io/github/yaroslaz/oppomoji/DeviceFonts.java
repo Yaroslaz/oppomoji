@@ -126,6 +126,10 @@ final class DeviceFonts {
         } catch (RuntimeException error) { active.put("error", error.toString()); }
         report.put("activeSystemTypefaceMetrics", active);
         report.put("systemResolvedFonts", SystemFontAccess.report());
+        // Android's global weight shift ("Bold text"); fallback fonts with a weight axis follow it.
+        try { report.put("fontWeightAdjustmentSetting", Settings.Secure.getInt(context.getContentResolver(), "font_weight_adjustment", 0)); }
+        catch (RuntimeException error) { report.put("fontWeightAdjustmentSetting", error.toString()); }
+        if (Build.VERSION.SDK_INT >= 31) report.put("fontWeightAdjustment", context.getResources().getConfiguration().fontWeightAdjustment);
         report.put("previewWeight", weight); report.put("underlineDepthPercent", depth);
         report.put("underlineThicknessPercent", thickness / 10.0);
         report.put("textFont", description(text)); report.put("emojiFont", description(emoji));

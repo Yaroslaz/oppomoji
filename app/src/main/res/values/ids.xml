@@ -21,4 +21,5 @@
     <item name="advanced_toggle" type="id" />
     <item name="emoji_coverage" type="id" />
     <item name="export_sans" type="id" />
+    <item name="system_now" type="id" />
 </resources>
