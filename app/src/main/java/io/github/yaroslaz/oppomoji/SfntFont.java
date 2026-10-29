@@ -277,7 +277,10 @@ public final class SfntFont {
         return pack(buffer().getInt(0), copies);
     }
 
-    private Map<String, byte[]> copies() {
+    int signature() { return buffer().getInt(0); }
+
+    /** Copies of every table except DSIG, sorted by tag. */
+    Map<String, byte[]> copies() {
         Map<String, byte[]> copies = new LinkedHashMap<>();
         List<String> tags = tableTags();
         Collections.sort(tags);

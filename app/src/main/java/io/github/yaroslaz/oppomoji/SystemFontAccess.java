@@ -39,7 +39,8 @@ final class SystemFontAccess {
     static JSONObject report() throws Exception {
         JSONObject result = new JSONObject();
         if (Build.VERSION.SDK_INT < 31) return result.put("error", "Requires Android 12");
-        for (String[] probe : new String[][]{{"latin", "A"}, {"cyrillic", "Я"}, {"emoji", "😀"}}) {
+        // Digits, the period and the space went wrong when an emoji-only font filled the Dai slot.
+        for (String[] probe : new String[][]{{"latin", "A"}, {"cyrillic", "Я"}, {"digit", "1"}, {"period", "."}, {"space", " "}, {"emoji", "😀"}}) {
             JSONObject item = new JSONObject();
             try {
                 Font font = resolve(probe[1]);
@@ -56,6 +57,19 @@ final class SystemFontAccess {
             } catch (IOException | RuntimeException error) { item.put("error", error.toString()); }
             result.put(probe[0], item);
         }
+        // Whether a bold request reaches a heavier font or variation, or only synthetic bolding.
+        JSONObject bold = new JSONObject();
+        try {
+            Paint regular = new Paint(); regular.setTypeface(Typeface.DEFAULT); regular.setTextSize(100);
+            Paint heavy = new Paint(); heavy.setTypeface(Typeface.create(Typeface.DEFAULT, 700, false)); heavy.setTextSize(100);
+            Font font = resolve("Ш", heavy);
+            bold.put("file", font.getFile() == null ? JSONObject.NULL : font.getFile().getAbsolutePath());
+            bold.put("axes", java.util.Arrays.toString(font.getAxes()));
+            bold.put("fontWeight", font.getStyle().getWeight());
+            DeviceFonts.finite(bold, "widthRegular", regular.measureText("Шрифт OPPO 123"));
+            DeviceFonts.finite(bold, "widthBold700", heavy.measureText("Шрифт OPPO 123"));
+        } catch (IOException | RuntimeException error) { bold.put("error", error.toString()); }
+        result.put("boldRequest", bold);
         return result;
     }
 
