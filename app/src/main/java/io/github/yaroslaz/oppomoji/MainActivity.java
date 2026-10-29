@@ -73,6 +73,7 @@ public final class MainActivity extends Activity {
     private final TextView[] checks = new TextView[4];
     private File textFile, emojiFile, repairedFile, repairedTextFile, slotFile, sansFile;
     private SharedPreferences prefs;
+    private TextView systemNow;
     private TextView textStatus, emojiStatus, status, weightLabel, depthLabel, thicknessLabel, before, after, coverageLabel;
     private final List<TextView> showcase = new ArrayList<>();
     private EmojiCoverage coverage;
@@ -166,6 +167,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout hero = card(page);
         section(hero, "", "iOS-эмодзи для zFont");
+        systemNow = label("Сейчас в системе: проверяю…", 13, PRIMARY); systemNow.setId(R.id.system_now); hero.addView(systemNow);
         hero.addView(showcaseGrid(), new LinearLayout.LayoutParams(-1, -2));
         coverageLabel = label("Проверяю полноту набора…", 13, MUTED); coverageLabel.setId(R.id.emoji_coverage);
         space(coverageLabel, 6); hero.addView(coverageLabel);
@@ -695,6 +697,7 @@ public final class MainActivity extends Activity {
         Typeface repairedResult = typeface(repairedTextFile.isFile() ? repairedTextFile : textFile,
                 repairedFile.isFile() ? repairedFile : emojiFile);
         Typeface interfaceFont = textFile.isFile() && textSupportsCyrillic ? typeface(textFile, emojiFile, 400) : null;
+        String systemSummary = SystemFontAccess.summary();
         // Once prepared, the lower sample uses the slot file first, as the system will.
         Typeface lower = slotCurrent() ? SlotFont.typeface(slotFile) : repairedResult;
         EmojiCoverage measured = measureCoverage();
@@ -738,6 +741,7 @@ public final class MainActivity extends Activity {
             depthSlider.setProgress(depth - 2); depthLabel.setText("Отступ от базовой линии: " + depth + "%");
             thicknessSlider.setProgress(thickness - 5); thicknessLabel.setText(thicknessText());
             updateChecklist();
+            systemNow.setText(systemSummary);
         });
         if (textError != null) message = "Исправление текста недоступно: " + textError;
         else if (repairedTextFile.isFile()) message = "Копия текстового шрифта готова: ползунки меняют исправленный пример.";

@@ -33,7 +33,22 @@ final class SystemFontAccess {
             try (FontFile source = new FontFile(file)) { return source.metadata(font.getTtcIndex()).familyName(); }
             catch (IOException | RuntimeException ignored) { /* The native Font remains usable without metadata. */ }
         }
-        return "Активный системный emoji-шрифт";
+        return "Активный системный шрифт";
+    }
+
+    /** One line for the main screen: which files draw letters and emoji in the system right now. */
+    static String summary() {
+        if (Build.VERSION.SDK_INT < 31) return "Сейчас в системе: проверка доступна с Android 12";
+        try {
+            return "Сейчас в системе: буквы — " + describe(resolve("Я")) + "; эмодзи — " + describe(resolve("😀")) + ".";
+        } catch (IOException | RuntimeException error) { return "Сейчас в системе: не удалось определить (" + error.getMessage() + ")"; }
+    }
+
+    private static String describe(Font font) {
+        File file = font.getFile();
+        String name = file == null ? "" : file.getName();
+        boolean slot = file != null && file.getAbsolutePath().contains("format_unclear");
+        return familyName(font) + (slot ? " из слота Dai (zFont)" : name.isEmpty() ? "" : " (" + name + ")");
     }
 
     static JSONObject report() throws Exception {
@@ -70,6 +85,24 @@ final class SystemFontAccess {
             DeviceFonts.finite(bold, "widthBold700", heavy.measureText("Шрифт OPPO 123"));
         } catch (IOException | RuntimeException error) { bold.put("error", error.toString()); }
         result.put("boldRequest", bold);
+        // System screens draw with elegant text height and the region locale (ru-MM under Dai); the font
+        // chosen for punctuation there can differ from a plain Paint, and a tall fallback widens lines.
+        JSONObject screen = new JSONObject();
+        Paint ui = new Paint(); ui.setTypeface(Typeface.DEFAULT); ui.setTextSize(100);
+        ui.setElegantTextHeight(true); ui.setTextLocales(android.os.LocaleList.getDefault());
+        for (String probe : new String[]{".", ",", ":", "\u00B7", "\u2022", "\u2026", "1", "A", "\u042F", " "}) {
+            JSONObject item = new JSONObject();
+            try {
+                Font font = resolve(probe, ui);
+                File file = font.getFile();
+                item.put("file", file == null ? JSONObject.NULL : file.getAbsolutePath()).put("family", familyName(font));
+                Paint plain = new Paint(); plain.setTextSize(100);
+                Paint.FontMetrics metrics = new Paint.FontMetrics(); font.getMetrics(plain, metrics);
+                item.put("metricsAt100px", LineDiagnostics.metrics(metrics));
+            } catch (IOException | RuntimeException error) { item.put("error", error.toString()); }
+            screen.put(probe, item);
+        }
+        result.put("screenText", screen);
         return result;
     }
 
