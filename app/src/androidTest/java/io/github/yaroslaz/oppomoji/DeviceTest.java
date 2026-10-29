@@ -434,6 +434,41 @@ public class DeviceTest {
         }
     }
 
+    /** Temporary: find which public configuration lets U+FE0F reach the colour font. */
+    @Test public void zzDiagnoseVariationSelectorFallback() throws Exception {
+        File prepared = new File(context.getExternalFilesDir(null), "verified-emoji.ttf");
+        File text = roboto();
+        StringBuilder out = new StringBuilder("\nROBOTO=" + text.getName());
+        Font textFont = new Font.Builder(text).build(), emojiFont = new Font.Builder(prepared).build();
+        java.util.Map<String, Typeface> configs = new java.util.LinkedHashMap<>();
+        configs.put("A text+emoji+sys", new Typeface.CustomFallbackBuilder(new FontFamily.Builder(textFont).build())
+                .addCustomFallback(new FontFamily.Builder(emojiFont).build()).setSystemFallback("sans-serif").build());
+        configs.put("B text+sys", new Typeface.CustomFallbackBuilder(new FontFamily.Builder(textFont).build()).setSystemFallback("sans-serif").build());
+        configs.put("C default", Typeface.DEFAULT);
+        configs.put("D emoji+text", new Typeface.CustomFallbackBuilder(new FontFamily.Builder(emojiFont).build())
+                .addCustomFallback(new FontFamily.Builder(textFont).build()).build());
+        try {
+            java.lang.reflect.Method build = FontFamily.Builder.class.getDeclaredMethod("build", String.class, int.class, boolean.class, boolean.class);
+            build.setAccessible(true);
+            FontFamily tagged = (FontFamily) build.invoke(new FontFamily.Builder(emojiFont), "und-Zsye", 0, true, false);
+            configs.put("E text+zsye", new Typeface.CustomFallbackBuilder(new FontFamily.Builder(textFont).build()).addCustomFallback(tagged).setSystemFallback("sans-serif").build());
+        } catch (Throwable error) { out.append("\nE reflection: ").append(error); }
+        for (java.util.Map.Entry<String, Typeface> config : configs.entrySet()) {
+            for (String locales : new String[]{"ru-RU", "ru-RU-u-em-emoji"}) {
+                out.append("\n").append(config.getKey()).append(" [").append(locales).append("]:");
+                Paint paint = new Paint(); paint.setTextSize(48); paint.setTypeface(config.getValue());
+                paint.setTextLocales(android.os.LocaleList.forLanguageTags(locales));
+                for (String sample : new String[]{"\u00A9\uFE0F", "\u00A9", "\u2122\uFE0F", "1\uFE0F\u20E3", "1", " ", "\uD83D\uDE00"}) {
+                    android.graphics.text.PositionedGlyphs glyphs = android.graphics.text.TextRunShaper.shapeTextRun(sample, 0, sample.length(), 0, sample.length(), 0, 0, false, paint);
+                    Font font = glyphs.glyphCount() == 0 ? null : glyphs.getFont(0);
+                    out.append(" ").append(Integer.toHexString(sample.codePointAt(0))).append(sample.length() > 1 ? "+" : "").append("=")
+                            .append(font == null || font.getFile() == null ? "?" : font.getFile().getName()).append("#").append(glyphs.glyphCount());
+                }
+            }
+        }
+        fail(out.toString());
+    }
+
     private static void setProgress(SeekBar slider, int value) {
         Bundle args = new Bundle(); args.putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, value);
         assertTrue(slider.performAccessibilityAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId(), args));
