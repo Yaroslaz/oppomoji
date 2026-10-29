@@ -99,7 +99,11 @@ final class DeviceFonts {
         }
     }
 
-    static byte[] read(File file) throws IOException { return read(Files.newInputStream(file.toPath()), SfntFont.MAX_BYTES); }
+    /** Exact-size read: a 35 MB emoji font must not pass through a growing buffer. */
+    static byte[] read(File file) throws IOException {
+        if (Files.size(file.toPath()) > SfntFont.MAX_BYTES) throw new IOException("Файл больше " + SfntFont.MAX_BYTES / 1024 / 1024 + " МБ");
+        return Files.readAllBytes(file.toPath());
+    }
 
     static JSONObject report(Context context, File text, File emoji, File repaired, int weight, int depth, int thickness) throws Exception {
         JSONObject report = new JSONObject();

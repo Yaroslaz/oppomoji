@@ -15,4 +15,8 @@
     <item name="load_active_emoji" type="id" />
     <item name="export_original_emoji" type="id" />
     <item name="download_emoji" type="id" />
+    <item name="prepare_ios" type="id" />
+    <item name="emoji_showcase" type="id" />
+    <item name="progress" type="id" />
+    <item name="advanced_toggle" type="id" />
 </resources>

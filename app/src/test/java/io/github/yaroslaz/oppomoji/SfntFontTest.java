@@ -114,6 +114,67 @@ public class SfntFontTest {
         }
     }
 
+    /** cmap: format 12 for ©, ® and a format 14 with text (U+FE0E) and emoji (U+FE0F) selectors. */
+    private static byte[] variationFont(boolean colour) {
+        ByteBuffer base = ByteBuffer.allocate(16 + 2 * 12);
+        base.putShort((short) 12).putShort((short) 0).putInt(16 + 2 * 12).putInt(0).putInt(2);
+        base.putInt(0xA9).putInt(0xA9).putInt(1).putInt(0xAE).putInt(0xAE).putInt(2);
+        // FE0E: default UVS ©. FE0F: default UVS ©..® and a non-default mapping for U+2122 -> glyph 3.
+        ByteBuffer sequences = ByteBuffer.allocate(10 + 2 * 11 + 8 + 8 + 9);
+        sequences.putShort((short) 14).putInt(sequences.capacity()).putInt(2);
+        sequences.put((byte) 0).put((byte) 0xFE).put((byte) 0x0E).putInt(32).putInt(0);
+        sequences.put((byte) 0).put((byte) 0xFE).put((byte) 0x0F).putInt(40).putInt(48);
+        sequences.putInt(1).put((byte) 0).put((byte) 0).put((byte) 0xA9).put((byte) 0);
+        sequences.putInt(1).put((byte) 0).put((byte) 0).put((byte) 0xA9).put((byte) 5);
+        sequences.putInt(1).put((byte) 0).put((byte) 0x21).put((byte) 0x22).putShort((short) 3);
+        ByteBuffer cmap = ByteBuffer.allocate(4 + 2 * 8 + base.capacity() + sequences.capacity());
+        cmap.putShort((short) 0).putShort((short) 2);
+        cmap.putShort((short) 0).putShort((short) 5).putInt(20 + base.capacity());
+        cmap.putShort((short) 3).putShort((short) 10).putInt(20);
+        cmap.put(base.array()).put(sequences.array());
+        Map<String, byte[]> tables = new LinkedHashMap<>();
+        byte[] head = new byte[54]; ByteBuffer.wrap(head).putInt(12, 0x5F0F3CF5).putShort(18, (short) 1000);
+        tables.put("head", head);
+        byte[] post = new byte[32]; ByteBuffer.wrap(post).putInt(0, 0x00030000).putShort(8, (short) -100).putShort(10, (short) 50);
+        tables.put("post", post); tables.put("cmap", cmap.array());
+        if (colour) { tables.put("CBDT", new byte[4]); tables.put("CBLC", new byte[4]); }
+        try { return SfntFont.pack(0x00010000, tables); } catch (IOException error) { throw new AssertionError(error); }
+    }
+
+    @Test public void readsDefaultAndNonDefaultVariationSequences() throws Exception {
+        SfntFont font = new SfntFont(variationFont(false));
+        assertTrue(font.hasVariationSequence(0xA9, 0xFE0F)); assertTrue(font.hasVariationSequence(0xAE, 0xFE0F));
+        assertTrue(font.hasVariationSequence(0x2122, 0xFE0F)); assertTrue(font.hasVariationSequence(0xA9, 0xFE0E));
+        assertFalse(font.hasVariationSequence(0xAE, 0xFE0E)); assertFalse(font.hasVariationSequence(0xAF, 0xFE0F));
+        assertTrue(font.claimsEmojiPresentation());
+        assertFalse(new SfntFont(variationFont(true)).claimsEmojiPresentation());
+        assertFalse(new SfntFont(fixture(false, false)).claimsEmojiPresentation());
+    }
+
+    @Test public void textCopyHandsOnlyEmojiPresentationToFallback() throws Exception {
+        byte[] input = variationFont(false);
+        SfntFont original = new SfntFont(input);
+        SfntFont released = new SfntFont(original.withoutEmojiPresentation());
+        assertFalse(released.claimsEmojiPresentation());
+        assertFalse(released.hasVariationSequence(0xA9, 0xFE0F)); assertFalse(released.hasVariationSequence(0x2122, 0xFE0F));
+        assertTrue(released.hasVariationSequence(0xA9, 0xFE0E)); assertTrue(released.hasCodePoint(0xA9));
+        assertEquals(-100, released.underlinePosition());
+        assertEquals(table(input, "cmap").length, table(original.withoutEmojiPresentation(), "cmap").length);
+        assertTrue(original.hasVariationSequence(0xA9, 0xFE0F));
+
+        SfntFont repaired = new SfntFont(original.withUnderline(-150, 60, true));
+        assertEquals(-150, repaired.underlinePosition()); assertFalse(repaired.claimsEmojiPresentation());
+        assertTrue(new SfntFont(original.withUnderline(-150, 60)).claimsEmojiPresentation());
+        try { released.withoutEmojiPresentation(); fail(); } catch (IOException expected) { /* nothing left to release */ }
+    }
+
+    @Test public void ignoresTruncatedVariationSubtable() throws Exception {
+        byte[] input = variationFont(false);
+        byte[] cmap = table(input, "cmap");
+        ByteBuffer.wrap(cmap).putInt(20 + 40 + 2, 1 << 20);
+        assertEquals(0, SfntFont.releaseEmojiPresentation(cmap));
+    }
+
     @Test public void checksumPadsPartialWord() { assertEquals(0x01020300L, SfntFont.checksum(new byte[]{1, 2, 3})); }
 
     private static byte[] table(byte[] font, String tag) {

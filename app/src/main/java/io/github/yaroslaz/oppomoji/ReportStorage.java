@@ -4,6 +4,7 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.net.Uri;
 import android.os.Environment;
+import android.database.Cursor;
 import android.provider.MediaStore;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -32,5 +33,13 @@ final class ReportStorage {
             try { context.getContentResolver().delete(uri, null, null); } catch (RuntimeException ignored) { }
             throw error;
         }
+    }
+
+    /** MediaStore may append " (1)" when the name is taken; show the name the user will actually find. */
+    static String displayName(Context context, Uri uri, String fallback) {
+        try (Cursor cursor = context.getContentResolver().query(uri, new String[]{MediaStore.MediaColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst() && cursor.getString(0) != null) return cursor.getString(0);
+        } catch (RuntimeException ignored) { /* The saved file stays valid without its name. */ }
+        return fallback;
     }
 }

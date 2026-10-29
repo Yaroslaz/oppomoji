@@ -38,7 +38,7 @@ public class DeviceTest {
     private Context context;
     @Before public void cleanImports() throws Exception {
         context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        for (String name : new String[]{"text.ttf", "text-repaired.ttf", "emoji.ttf", "emoji-repaired.ttf"}) {
+        for (String name : new String[]{"text.ttf", "text-preview.ttf", "text-repaired.ttf", "emoji.ttf", "emoji-repaired.ttf"}) {
             Files.deleteIfExists(new File(context.getFilesDir(), name).toPath());
         }
         context.getSharedPreferences("fonts", Context.MODE_PRIVATE).edit().clear().commit();
@@ -286,7 +286,7 @@ public class DeviceTest {
                         TextView view = activity.findViewById(id);
                         assertEquals(simulated, SystemFontAccess.resolve("😀", view.getPaint()).getFile());
                         File text = SystemFontAccess.resolve("Я", view.getPaint()).getFile();
-                        assertTrue(text.getName().equals("text.ttf") || text.getName().equals("text-repaired.ttf"));
+                        assertTrue(text.getName().startsWith("text") && text.getParentFile().equals(context.getFilesDir()));
                         org.json.JSONObject snapshot = LineDiagnostics.snapshot(view);
                         assertEquals(simulated.getAbsolutePath(), snapshot.getJSONObject("resolvedFonts").getJSONObject("emoji").getString("file"));
                     } catch (Exception error) { throw new AssertionError(error); }
@@ -372,7 +372,11 @@ public class DeviceTest {
                     }
                 }
             }
+            SfntFont textFont = new SfntFont(DeviceFonts.read(roboto()));
             org.json.JSONObject result = new org.json.JSONObject().put("fullyQualified", qualified).put("components", components)
+                    .put("textFont", roboto().getName()).put("textClaimsEmojiPresentation", textFont.claimsEmojiPresentation())
+                    .put("textHasCopyrightFe0f", textFont.hasVariationSequence(0xA9, 0xFE0F))
+                    .put("previewTextCopy", new File(context.getFilesDir(), "text-preview.ttf").isFile())
                     .put("total", total).put("typefacesChecked", 2).put("failures", new org.json.JSONArray(failures)).put("extraRawGlyphs", extraGlyphs);
             Files.write(new File(context.getExternalFilesDir(null), "emoji-set-verification.json").toPath(), result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             assertEquals(3944, qualified); assertEquals(9, components); assertEquals(3953, total);
@@ -385,6 +389,48 @@ public class DeviceTest {
             });
             frame(scenario); screenshot("05-full-emoji-set.png");
             assertTrue("Selected emoji font failed: " + failures.subList(0, Math.min(8, failures.size())), failures.isEmpty());
+        }
+    }
+
+    @Test public void oneTapPreparesIosEmojiWithSansUnderlineAndEmojiPresentation() throws Exception {
+        File prepared = new File(context.getExternalFilesDir(null), "verified-emoji.ttf");
+        assertTrue("Prepare the pinned font with tools/prepare_emoji.py and push it into the app's external files", prepared.isFile());
+        // As if the verified download already finished; the network step itself is covered by SHA-256 in EmojiSource.
+        Files.copy(prepared.toPath(), new File(context.getFilesDir(), "emoji.ttf").toPath());
+        context.getSharedPreferences("fonts", Context.MODE_PRIVATE).edit().putBoolean("verifiedEmoji", true).commit();
+        android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        android.app.Instrumentation.ActivityMonitor picker = instrumentation.addMonitor(new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT), null, true);
+        Uri[] exported = {null};
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            await(scenario, "Копия emoji-шрифта готова");
+            scenario.onActivity(activity -> activity.onActivityResult(10, Activity.RESULT_OK, new Intent().setData(Uri.fromFile(roboto()))));
+            await(scenario, "Копия текстового шрифта готова");
+            scenario.onActivity(activity -> activity.findViewById(R.id.prepare_ios).performClick());
+            await(scenario, "Готово: Загрузки/OPPOMoji/");
+            scenario.onActivity(activity -> exported[0] = activity.lastFontUri);
+            assertNotNull(exported[0]); assertEquals(0, picker.getHits());
+            SfntFont text = new SfntFont(DeviceFonts.read(roboto()));
+            SfntFont font = new SfntFont(DeviceFonts.read(context.getContentResolver().openInputStream(exported[0]), SfntFont.MAX_BYTES));
+            int depth = Math.max(2, Math.min(25, Math.round(-text.underlinePosition() * 100f / text.unitsPerEm())));
+            assertEquals(-Math.round(depth * font.unitsPerEm() / 100f), font.underlinePosition());
+            assertTrue(font.hasTable("CBDT")); assertTrue(font.hasVariationSequence(0xA9, 0xFE0F));
+            scenario.onActivity(activity -> {
+                try {
+                    TextView before = activity.findViewById(R.id.preview_before), after = activity.findViewById(R.id.preview_after);
+                    for (String sample : new String[]{"\u00A9\uFE0F", "\u203C\uFE0F", "\u2049\uFE0F"}) {
+                        assertEquals(sample, new File(context.getFilesDir(), "emoji.ttf"), SystemFontAccess.resolve(sample, before.getPaint()).getFile());
+                        assertEquals(sample, new File(context.getFilesDir(), "emoji-repaired.ttf"), SystemFontAccess.resolve(sample, after.getPaint()).getFile());
+                    }
+                    // Plain letters and digits stay in the text font.
+                    assertTrue(SystemFontAccess.resolve("1", after.getPaint()).getFile().getName().startsWith("text"));
+                    TextView showcase = activity.findViewById(R.id.emoji_showcase);
+                    assertEquals(new File(context.getFilesDir(), "emoji-repaired.ttf"), SystemFontAccess.resolve("😀", showcase.getPaint()).getFile());
+                } catch (java.io.IOException error) { throw new AssertionError(error); }
+            });
+            awaitLayout(scenario, R.id.emoji_showcase); frame(scenario); screenshot("06-one-tap.png");
+        } finally {
+            instrumentation.removeMonitor(picker);
+            if (exported[0] != null) context.getContentResolver().delete(exported[0], null, null);
         }
     }
 
