@@ -27,17 +27,18 @@ import android.text.Spanned;
 import android.text.style.UnderlineSpan;
 import android.text.style.SuggestionSpan;
 import android.text.InputType;
+import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import java.io.File;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -51,16 +52,23 @@ import org.json.JSONObject;
 public final class MainActivity extends Activity {
     private static final int IMPORT_TEXT = 10, IMPORT_EMOJI = 11, EXPORT_FONT = 12, EXPORT_TEXT = 14, EXPORT_FIXED_TEXT = 15;
     private static final int EXPORT_ORIGINAL_EMOJI = 16;
-    private static final int BG = Color.rgb(16, 17, 20), SURFACE = Color.rgb(29, 31, 36);
+    private static final int BG = Color.rgb(16, 17, 20), SURFACE = Color.rgb(29, 31, 36), RAISED = Color.rgb(38, 41, 48);
     private static final int PRIMARY = Color.rgb(142, 184, 255), WHITE = Color.rgb(243, 244, 248), MUTED = Color.rgb(180, 184, 195);
+    private static final int DONE = Color.rgb(128, 214, 160);
+    /** Bump when the repaired copies change for reasons other than the slider values. */
+    private static final String REPAIR_FORMAT = "2";
+    static final String IOS_EXPORT_NAME = "OPPOMoji-iOS-emoji.ttf";
+    private static final String SHOWCASE = "😀 😂 🥹 😍 🥰 😎 🤔 😭\n👍 👏 🙏 🫶 🤌 👀 🙈 💯\n❤️ 🔥 ✨ 🎉 ✅ ❤️‍🔥 🫠 🥲\n🐱 🍕 🚀 🇷🇺 👨‍👩‍👧‍👦 🙂‍↕️ 🫪 🫯";
     // Serialize file operations across Activity recreation as well as within one screen.
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
     private final List<Button> actions = new ArrayList<>();
     private final List<TextView> interfaceText = new ArrayList<>();
     private final List<TextView> boldInterfaceText = new ArrayList<>();
+    private final TextView[] checks = new TextView[4];
     private File textFile, emojiFile, repairedFile, repairedTextFile;
     private SharedPreferences prefs;
-    private TextView textStatus, emojiStatus, status, weightLabel, depthLabel, thicknessLabel, before, after;
+    private TextView textStatus, emojiStatus, status, weightLabel, depthLabel, thicknessLabel, before, after, showcase;
+    private ProgressBar progress;
     private SeekBar weightSlider, depthSlider, thicknessSlider;
     private Button exportFont, exportText, exportFixedText;
     private EditText inputBefore, inputAfter;
@@ -69,10 +77,11 @@ public final class MainActivity extends Activity {
     Font activeSystemEmoji;
     private String activeSystemEmojiName, activeSystemEmojiError;
     private SfntFont.Axis weightAxis;
-    private String textName, emojiName;
+    private String textName, emojiName, metricsSource;
     private int weight, depth, thickness;
     private boolean busy;
     private boolean textSupportsCyrillic = true;
+    private boolean textClaimsEmoji;
     private boolean verifiedEmoji;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable refreshPreview = this::refresh;
@@ -89,6 +98,7 @@ public final class MainActivity extends Activity {
         repairedTextFile = new File(getFilesDir(), "text-repaired.ttf");
         textName = prefs.getString("textName", "Системный шрифт");
         emojiName = prefs.getString("emojiName", "Системные эмодзи");
+        metricsSource = prefs.getString("metricsSource", "default");
         verifiedEmoji = prefs.getBoolean("verifiedEmoji", false) && emojiFile.isFile();
         weight = prefs.getInt("weight", 500); depth = prefs.getInt("depth", 10); thickness = prefs.getInt("thickness", 40);
         buildUi();
@@ -101,16 +111,15 @@ public final class MainActivity extends Activity {
             if (textFile.isFile()) {
                 try (FontFile source = new FontFile(textFile)) {
                     SfntFont info = source.metadata(0); replaceDigits = DeviceFonts.isDigitsFont(info.familyName());
-                    if (!replaceDigits) { weightAxis = info.weightAxis(); textSupportsCyrillic = supportsCyrillic(info); }
+                    if (!replaceDigits) { weightAxis = info.weightAxis(); textSupportsCyrillic = supportsCyrillic(info); textClaimsEmoji = info.claimsEmojiPresentation(); }
                 }
             }
             if (replaceDigits) {
-                DeviceFonts.Candidate replacement = null;
-                for (DeviceFonts.Candidate font : DeviceFonts.candidates()) if (font.cyrillic) { replacement = font; break; }
+                DeviceFonts.Candidate replacement = bestSans();
                 if (replacement != null) importSystemText(replacement);
                 else {
-                    Files.deleteIfExists(textFile.toPath()); Files.deleteIfExists(repairedTextFile.toPath());
-                    weightAxis = null; textName = "Нужен OPPO Sans: служебный шрифт цифр исключён"; savePreferences();
+                    deleteText();
+                    textName = "Нужен OPPO Sans: служебный шрифт цифр исключён"; savePreferences();
                 }
             }
             return makePreview();
@@ -119,15 +128,18 @@ public final class MainActivity extends Activity {
 
     private void buildUi() {
         getWindow().setStatusBarColor(BG);
-        getWindow().setNavigationBarColor(BG);
+        getWindow().setNavigationBarColor(SURFACE);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
+        LinearLayout root = column(); root.setBackgroundColor(BG);
         ScrollView scroll = new ScrollView(this);
         scroll.setId(R.id.page_scroll);
         scroll.setFillViewport(true); scroll.setBackgroundColor(BG);
-        LinearLayout page = column(); page.setPadding(dp(22), dp(20), dp(22), dp(28));
+        LinearLayout page = column(); page.setPadding(dp(20), dp(16), dp(20), dp(28));
         page.setFocusableInTouchMode(true); page.requestFocus();
         scroll.addView(page);
-        scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        root.addView(statusBar(), new LinearLayout.LayoutParams(-1, -2));
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets system = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
                 view.setPadding(system.left, system.top, system.right, system.bottom);
@@ -137,37 +149,49 @@ public final class MainActivity extends Activity {
             }
             return insets;
         });
-        setContentView(scroll);
+        setContentView(root);
         TextView eyebrow = label("ЛАБОРАТОРИЯ ШРИФТОВ · " + BuildConfig.VERSION_NAME, 11, PRIMARY); page.addView(eyebrow);
         TextView title = label("OPPOMoji", 34, WHITE); title.setTypeface(Typeface.DEFAULT, Typeface.BOLD); boldInterfaceText.add(title); heading(title); page.addView(title);
-        page.addView(label("OPPO Sans + любимые эмодзи", 16, MUTED));
+        page.addView(label("iOS-эмодзи Emoji 17.0 для ColorOS через zFont", 16, MUTED));
 
-        LinearLayout notice = card(page);
-        notice.addView(label("Сначала проверяем совместимость", 17, WHITE));
-        notice.addView(label("Эта сборка проверяет и подготавливает шрифты. Предпросмотр и его вес действуют внутри OPPOMoji. Установка во всей системе зависит от ColorOS; её выполняет менеджер шрифтов, например zFont.", 14, MUTED));
-        Button reportButton = button("Сохранить отчёт о совместимости", v -> saveReport());
-        reportButton.setId(R.id.save_report); notice.addView(reportButton);
-        notice.addView(label("JSON сохраняется в Загрузки/OPPOMoji. Системное окно выбора папки не требуется.", 12, MUTED));
+        LinearLayout hero = card(page);
+        section(hero, "", "iOS-эмодзи для zFont");
+        showcase = new TextView(this); showcase.setId(R.id.emoji_showcase);
+        showcase.setText(SHOWCASE); showcase.setTextSize(27); showcase.setTextColor(WHITE);
+        showcase.setGravity(Gravity.CENTER_HORIZONTAL); showcase.setLineSpacing(dp(6), 1);
+        showcase.setPadding(dp(8), dp(14), dp(8), dp(14)); showcase.setTextIsSelectable(true);
+        showcase.setContentDescription("Образец эмодзи с выбранными шрифтами");
+        GradientDrawable stage = new GradientDrawable(); stage.setColor(RAISED); stage.setCornerRadius(dp(18)); showcase.setBackground(stage);
+        hero.addView(showcase, new LinearLayout.LayoutParams(-1, -2));
+        TextView stageCaption = label("Так эмодзи выглядят с текущими файлами. После загрузки здесь будут iOS-рисунки.", 12, MUTED);
+        space(stageCaption, 6); hero.addView(stageCaption);
+        String[] steps = {"OPPO Sans", "iOS-набор", "Линия подчёркивания", "Файл для zFont"};
+        for (int i = 0; i < checks.length; i++) {
+            checks[i] = label(steps[i], 14, MUTED);
+            if (i == 0) space(checks[i], 10);
+            hero.addView(checks[i]);
+        }
+        Button prepare = primaryButton("Подготовить iOS-эмодзи для zFont", v -> prepareIos());
+        prepare.setId(R.id.prepare_ios); hero.addView(prepare, spaced(14));
+        hero.addView(label("Найдёт OPPO Sans, загрузит проверенный набор (35 МБ, SHA-256), перенесёт линию подчёркивания из OPPO Sans и сохранит TTF в Загрузки/OPPOMoji. Систему меняет только zFont.", 12, MUTED));
+        hero.addView(button("Как установить через zFont", v -> instructions()));
 
         LinearLayout sources = card(page);
-        section(sources, "01", "Выбрать шрифты");
+        section(sources, "01", "Шрифты");
         textStatus = label(textName, 15, WHITE); sources.addView(textStatus);
-        sources.addView(label("Найдём оригинальный OPPO Sans на телефоне или откроем твой TTF/OTF.", 13, MUTED));
         sources.addView(button("Найти OPPO Sans на телефоне", v -> findTextFont()));
         sources.addView(button("Открыть файл шрифта текста", v -> importFont(IMPORT_TEXT)));
         sources.addView(button("Использовать активный системный шрифт", v -> task("Возвращаю системный шрифт в примеры…", () -> {
-            Files.deleteIfExists(textFile.toPath()); Files.deleteIfExists(repairedTextFile.toPath());
-            weightAxis = null; textName = "Активный системный шрифт"; savePreferences(); return makePreview();
+            deleteText(); textName = "Активный системный шрифт"; savePreferences(); return makePreview();
         })));
         emojiStatus = label(emojiName, 15, WHITE); space(emojiStatus, 18); sources.addView(emojiStatus);
-        sources.addView(label("Без импорта примеры используют активные системные эмодзи (Android 12+). Для редактирования и экспорта прочитай их кнопкой ниже или открой свой TTF/OTF.", 13, MUTED));
+        Button fullEmoji = button("Загрузить полный iOS-набор · Emoji 17.0", v -> downloadEmoji());
+        fullEmoji.setId(R.id.download_emoji); sources.addView(fullEmoji);
+        sources.addView(label("Закреплённая версия с GitHub, только по нажатию. В Android 16 проверены 3 944 эмодзи и 9 компонентов, включая ☺️ ❤️ 😶‍🌫️ 🙂‍↕️ и ©️ ‼️ #️⃣.", 12, MUTED));
         sources.addView(button("Открыть файл эмодзи", v -> importFont(IMPORT_EMOJI)));
         Button activeEmoji = button("Взять активный emoji-шрифт из системы", v -> loadActiveEmoji());
         activeEmoji.setId(R.id.load_active_emoji); sources.addView(activeEmoji);
-        sources.addView(label("Читает шрифт, которым Android сейчас рисует 😀. При включённой замене это может быть твой пакет из zFont.", 13, MUTED));
-        Button fullEmoji = button("Загрузить полный iOS-набор · Emoji 17.0", v -> downloadEmoji());
-        fullEmoji.setId(R.id.download_emoji); sources.addView(fullEmoji);
-        sources.addView(label("35 МБ с GitHub, только по нажатию. Проверяется SHA-256 закреплённой версии. В Android 16 проверены 3 944 эмодзи и 9 компонентов, включая ☺️ ❤️ 😶‍🌫️ 🙂‍↕️ 🙂‍↔️. Для установки через zFont сохрани исправленный emoji-шрифт в разделе 04.", 13, MUTED));
+        sources.addView(label("Без импорта примеры используют эмодзи, которыми Android сейчас рисует 😀 (Android 12+). При включённой замене это может быть пакет из zFont.", 12, MUTED));
 
         LinearLayout preview = card(page);
         section(preview, "02", "Сравнить отображение");
@@ -176,55 +200,72 @@ public final class MainActivity extends Activity {
             weight = value + 100; weightLabel.setText("Вес предпросмотра: " + weight);
         });
         weightSlider.setId(R.id.weight_slider);
-        preview.addView(label("Плавный вес доступен после выбора шрифта с осью wght. Штатный ползунок ColorOS приложение не меняет.", 13, MUTED));
+        preview.addView(label("Плавный вес доступен для шрифта с осью wght. Штатный ползунок ColorOS приложение не меняет.", 12, MUTED));
         preview.addView(label("Исходный текстовый шрифт и эмодзи", 12, PRIMARY));
         before = sample(); before.setId(R.id.preview_before); preview.addView(before);
         TextView repairedLabel = label("Копия с выбранными метриками линии", 12, PRIMARY); space(repairedLabel, 18); preview.addView(repairedLabel);
         after = sample(); after.setId(R.id.preview_after); preview.addView(after);
+        preview.addView(label("©️ ™️ ⁉️ #️⃣ здесь могут выглядеть текстом: Android не даёт приложению пометить свой шрифт как эмодзи, и такие символы забирает текстовый шрифт. Установленный через zFont шрифт становится системным, и там их выбирает emoji-семейство.", 12, MUTED));
         preview.addView(label("Поле ввода: исходный шрифт", 12, PRIMARY));
         inputBefore = inputSample(); inputBefore.setId(R.id.input_before); preview.addView(inputBefore);
         preview.addView(label("Поле ввода: исправленная копия", 12, PRIMARY));
         inputAfter = inputSample(); inputAfter.setId(R.id.input_after); preview.addView(inputAfter);
-        preview.addView(label("Белая линия — обычное подчёркивание, цветная — тестовая пометка орфографии. Толщину цветной линии задаёт Android; её положение берётся из шрифта. В отчёт содержимое полей не попадает.", 13, MUTED));
+        preview.addView(label("Белая линия — обычное подчёркивание, цветная — тестовая пометка орфографии. Толщину цветной линии задаёт Android; её положение берётся из шрифта. В отчёт содержимое полей не попадает.", 12, MUTED));
         preview.addView(label("Активный системный шрифт: межстрочный интервал", 12, PRIMARY));
         systemSample = label("Первая строка: Яя Щщ\nВторая строка: OPPO Sans\nТретья строка: 😀 👋", 15, WHITE);
         systemSample.setId(R.id.active_system_sample); interfaceText.remove(systemSample);
         systemSample.setTypeface(Typeface.DEFAULT); preview.addView(systemSample);
-        preview.addView(label("Этот образец следует системным настройкам Dai. Остальные подписи используют выбранный текстовый шрифт. Отчёт сравнивает реальные расстояния между строками.", 13, MUTED));
+        preview.addView(label("Этот образец следует системным настройкам Dai. Остальные подписи используют выбранный текстовый шрифт.", 12, MUTED));
 
         LinearLayout metrics = card(page);
-        section(metrics, "03", "Настроить подчёркивание");
-        metrics.addView(label("Ползунки меняют линию в копии текстового шрифта и, если он выбран, emoji-шрифта. Изменения видны в исправленном примере. Для начала выбери файл текстового шрифта.", 13, MUTED));
+        section(metrics, "03", "Линия подчёркивания");
+        metrics.addView(label("Меняет линию в копиях текстового и emoji-шрифта. Под Dai система берёт её из emoji-шрифта, поэтому её стоит перенести из OPPO Sans.", 12, MUTED));
+        metrics.addView(button("Взять метрики из OPPO Sans", v -> useTextMetrics()));
         depthLabel = label("Отступ от базовой линии: " + depth + "%", 15, WHITE); metrics.addView(depthLabel);
         depthSlider = slider(metrics, "Отступ подчёркивания в процентах em", 23, depth - 2, value -> {
-            depth = value + 2; depthLabel.setText("Отступ от базовой линии: " + depth + "%");
+            depth = value + 2; metricsSource = "custom"; depthLabel.setText("Отступ от базовой линии: " + depth + "%");
         });
         depthSlider.setId(R.id.depth_slider);
         thicknessLabel = label(thicknessText(), 15, WHITE); metrics.addView(thicknessLabel);
         thicknessSlider = slider(metrics, "Толщина подчёркивания в десятых процента em", 75, thickness - 5, value -> {
-            thickness = value + 5; thicknessLabel.setText(thicknessText());
+            thickness = value + 5; metricsSource = "custom"; thicknessLabel.setText(thicknessText());
         });
         thicknessSlider.setId(R.id.thickness_slider);
-        metrics.addView(button("Взять метрики из OPPO Sans", v -> useTextMetrics()));
 
         LinearLayout export = card(page);
-        section(export, "04", "Проверить в ColorOS");
-        exportFont = button("Сохранить исправленный emoji-шрифт", v -> createDocument(EXPORT_FONT, "OPPOMoji-emoji.ttf", "font/ttf"));
+        section(export, "04", "Сохранить и проверить");
+        exportFont = primaryButton("Сохранить emoji-шрифт для zFont", v -> createDocument(EXPORT_FONT, emojiExportName(), "font/ttf"));
         exportFont.setId(R.id.export_font);
-        export.addView(exportFont);
+        export.addView(exportFont, spaced(4));
+        Button reportButton = button("Сохранить отчёт о совместимости", v -> saveReport());
+        reportButton.setId(R.id.save_report); export.addView(reportButton);
+        export.addView(label("Файлы и JSON сохраняются в Загрузки/OPPOMoji без окна выбора папки. Отчёт никуда не отправляется.", 12, MUTED));
+        Button more = button("Дополнительно ▾", null); more.setId(R.id.advanced_toggle); export.addView(more);
+        LinearLayout advanced = column(); advanced.setVisibility(View.GONE); export.addView(advanced);
+        more.setOnClickListener(v -> {
+            boolean show = advanced.getVisibility() != View.VISIBLE;
+            advanced.setVisibility(show ? View.VISIBLE : View.GONE); more.setText(show ? "Дополнительно ▴" : "Дополнительно ▾");
+        });
         Button originalEmoji = button("Сохранить исходный emoji-шрифт", v -> createDocument(EXPORT_ORIGINAL_EMOJI, "OPPOMoji-emoji-original.ttf", "font/ttf"));
-        originalEmoji.setId(R.id.export_original_emoji); export.addView(originalEmoji);
+        originalEmoji.setId(R.id.export_original_emoji); advanced.addView(originalEmoji);
         exportFixedText = button("Сохранить текстовый шрифт с исправлением линии", v -> createDocument(EXPORT_FIXED_TEXT, "OPPOMoji-text-fixed.ttf", "font/ttf"));
-        exportFixedText.setId(R.id.export_fixed_text); export.addView(exportFixedText);
-        export.addView(button("Открыть инструкцию для ColorOS", v -> instructions()));
-        export.addView(button("Открыть настройки экрана", v -> openDisplaySettings()));
-        export.addView(button("Сохранить отчёт о совместимости", v -> saveReport()));
-        exportText = button("Сохранить копию шрифта текста", v -> createDocument(EXPORT_TEXT, "OPPOMoji-text.ttf", "font/ttf")); export.addView(exportText);
-        export.addView(button("Убрать импортированные шрифты", v -> resetFonts()));
+        exportFixedText.setId(R.id.export_fixed_text); advanced.addView(exportFixedText);
+        exportText = button("Сохранить копию шрифта текста", v -> createDocument(EXPORT_TEXT, "OPPOMoji-text.ttf", "font/ttf")); advanced.addView(exportText);
+        advanced.addView(button("Открыть настройки экрана", v -> openDisplaySettings()));
+        advanced.addView(button("Убрать импортированные шрифты", v -> resetFonts()));
 
+        TextView footer = label("Обработка шрифтов работает без root и без отправки данных. Сеть нужна только для загрузки набора по кнопке.", 12, MUTED); space(footer, 20); page.addView(footer);
+    }
+
+    private LinearLayout statusBar() {
+        LinearLayout bar = column(); bar.setBackgroundColor(SURFACE); bar.setPadding(dp(20), dp(6), dp(20), dp(10));
+        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setId(R.id.progress); progress.setIndeterminate(true); progress.setVisibility(View.INVISIBLE);
+        progress.setProgressTintList(ColorStateList.valueOf(PRIMARY)); progress.setIndeterminateTintList(ColorStateList.valueOf(PRIMARY));
+        bar.addView(progress, new LinearLayout.LayoutParams(-1, dp(6)));
         status = label("Готово к проверке", 14, PRIMARY); status.setId(R.id.status); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        status.setTextIsSelectable(true); page.addView(status);
-        TextView footer = label("Обработка шрифтов работает без сети и root. Интернет используется по кнопке загрузки набора; отчёты никуда не отправляются.", 12, MUTED); space(footer, 20); page.addView(footer);
+        status.setTextIsSelectable(true); status.setMaxLines(6); bar.addView(status);
+        return bar;
     }
 
     private TextView sample() {
@@ -263,6 +304,7 @@ public final class MainActivity extends Activity {
     private SeekBar slider(LinearLayout parent, String label, int max, int value, Progress changed) {
         SeekBar slider = new SeekBar(this); slider.setMax(max); slider.setProgress(Math.max(0, Math.min(max, value)));
         slider.setContentDescription(label); slider.setMinHeight(dp(48));
+        slider.setProgressTintList(ColorStateList.valueOf(PRIMARY)); slider.setThumbTintList(ColorStateList.valueOf(PRIMARY));
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                 if (fromUser) { changed.set(progress); main.removeCallbacks(refreshPreview); main.postDelayed(refreshPreview, 180); }
@@ -286,12 +328,21 @@ public final class MainActivity extends Activity {
         catch (ActivityNotFoundException | SecurityException error) { status.setText("ColorOS не открыла выбор файла. Можно найти системный OPPO Sans кнопкой выше. Отчёт сохраняется без этого окна."); }
     }
 
+    private String emojiExportName() { return verifiedEmoji ? IOS_EXPORT_NAME : "OPPOMoji-emoji.ttf"; }
+
     private void createDocument(int request, String name, String mime) {
-        task("Сохраняю шрифт в Загрузки…", () -> {
-            File source = exportSource(request);
-            lastFontUri = ReportStorage.save(this, name, mime, output -> Files.copy(source.toPath(), output));
-            return "Шрифт сохранён: Загрузки/OPPOMoji/" + name;
-        });
+        task("Сохраняю шрифт в Загрузки…", () -> "Шрифт сохранён: Загрузки/OPPOMoji/" + save(request, name, mime));
+    }
+
+    /** Runs on the worker. Returns the name MediaStore actually used. */
+    private String save(int request, String name, String mime) throws IOException {
+        File source = exportSource(request);
+        lastFontUri = ReportStorage.save(this, name, mime, output -> Files.copy(source.toPath(), output));
+        if (request == EXPORT_FONT) {
+            prefs.edit().putString("exported", prefs.getString(repairKeyName(repairedFile), "")).commit();
+            runOnUiThread(() -> { if (!isFinishing() && !isDestroyed()) updateChecklist(); });
+        }
+        return ReportStorage.displayName(this, lastFontUri, name);
     }
 
     private File exportSource(int request) throws IOException {
@@ -312,6 +363,7 @@ public final class MainActivity extends Activity {
             JSONObject report = DeviceFonts.report(this, textFile, emojiFile, repairedFile, weight, depth, thickness);
             report.put("lineLayouts", layouts);
             report.put("previewEmojiSource", emojiFile.isFile() ? "imported-file" : activeSystemEmoji != null ? "active-system-font" : "system-fallback");
+            report.put("underlineMetricsSource", metricsSource);
             if (verifiedEmoji) report.put("verifiedEmojiSet", new JSONObject().put("unicodeVersion", "17.0")
                     .put("sourceUrl", EmojiSource.URL).put("sourceSha256BeforeRepair", EmojiSource.SHA256)
                     .put("fullyQualifiedTested", 3944).put("componentsTested", 9));
@@ -356,56 +408,43 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) return;
+        if (request != IMPORT_TEXT && request != IMPORT_EMOJI) return;
         Uri uri = data.getData();
-        if (request == IMPORT_TEXT || request == IMPORT_EMOJI) {
-            String name = displayName(uri);
-            task("Проверяю файл…", () -> {
-                byte[] bytes = DeviceFonts.read(getContentResolver().openInputStream(uri), SfntFont.MAX_BYTES);
-                // Let Android validate the font before replacing a previous import.
-                File temporary = new File(getCacheDir(), "import.ttf");
+        String name = displayName(uri);
+        task("Проверяю файл…", () -> {
+            byte[] bytes = DeviceFonts.read(getContentResolver().openInputStream(uri), SfntFont.MAX_BYTES);
+            // Let Android validate the font before replacing a previous import.
+            File temporary = new File(getCacheDir(), "import.ttf");
+            Files.write(temporary.toPath(), bytes);
+            if (bytes.length >= 4 && java.nio.ByteBuffer.wrap(bytes).getInt() == 0x74746366) {
+                try (FontFile collection = new FontFile(temporary)) {
+                    int chosen = 0;
+                    for (int i = 0; i < collection.faceCount(); i++) {
+                        SfntFont metadata = collection.metadata(i);
+                        if (request == IMPORT_TEXT && DeviceFonts.isOppoSans(metadata.familyName(), "")) { chosen = i; break; }
+                        if (request == IMPORT_EMOJI && (metadata.hasTable("CBDT") || metadata.hasTable("COLR"))) { chosen = i; break; }
+                    }
+                    bytes = collection.extract(chosen);
+                }
                 Files.write(temporary.toPath(), bytes);
-                if (bytes.length >= 4 && java.nio.ByteBuffer.wrap(bytes).getInt() == 0x74746366) {
-                    try (FontFile collection = new FontFile(temporary)) {
-                        int chosen = 0;
-                        for (int i = 0; i < collection.faceCount(); i++) {
-                            SfntFont metadata = collection.metadata(i);
-                            if (request == IMPORT_TEXT && DeviceFonts.isOppoSans(metadata.familyName(), "")) { chosen = i; break; }
-                            if (request == IMPORT_EMOJI && (metadata.hasTable("CBDT") || metadata.hasTable("COLR"))) { chosen = i; break; }
-                        }
-                        bytes = collection.extract(chosen);
-                    }
-                    Files.write(temporary.toPath(), bytes);
+            }
+            SfntFont info = new SfntFont(bytes); info.axes();
+            if (request == IMPORT_TEXT && DeviceFonts.isDigitsFont(info.familyName())) {
+                throw new IOException("Это служебный шрифт цифр. Выбери OPPO Sans 4.0 EN для букв и кириллицы");
+            }
+            new Font.Builder(temporary).build();
+            if (request == IMPORT_TEXT) {
+                Files.move(temporary.toPath(), textFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                textChanged(info, info.familyName() + " · " + name);
+            } else {
+                if (!info.hasTable("CBDT") && !info.hasTable("COLR") && !info.hasTable("sbix") && !info.hasTable("SVG ")) {
+                    throw new IOException("В файле нет цветных emoji-таблиц. Выбери emoji-шрифт TTF/OTF");
                 }
-                SfntFont info = new SfntFont(bytes); info.axes();
-                if (request == IMPORT_TEXT && DeviceFonts.isDigitsFont(info.familyName())) {
-                    throw new IOException("Это служебный шрифт цифр. Выбери OPPO Sans 4.0 EN для букв и кириллицы");
-                }
-                new Font.Builder(temporary).build();
-                if (request == IMPORT_TEXT) {
-                    Files.move(temporary.toPath(), textFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                    weightAxis = info.weightAxis(); textName = info.familyName() + " · " + name;
-                    textSupportsCyrillic = supportsCyrillic(info);
-                    if (weightAxis != null) weight = Math.round(Math.max(weightAxis.min, Math.min(weightAxis.max, weight)));
-                } else {
-                    if (!info.hasTable("CBDT") && !info.hasTable("COLR") && !info.hasTable("sbix") && !info.hasTable("SVG ")) {
-                        throw new IOException("В файле нет цветных emoji-таблиц. Выбери emoji-шрифт TTF/OTF");
-                    }
-                    Files.move(temporary.toPath(), emojiFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                    emojiName = info.familyName() + " · " + info.colorFormat();
-                    verifiedEmoji = false;
-                }
-                savePreferences(); return makePreview();
-            });
-        } else if (request == EXPORT_FONT || request == EXPORT_FIXED_TEXT || request == EXPORT_TEXT) {
-            task("Сохраняю файл…", () -> {
-                try (OutputStream output = getContentResolver().openOutputStream(uri, "wt")) {
-                    if (output == null) throw new IOException("Не удалось открыть выбранное место сохранения");
-                    File source = exportSource(request);
-                    Files.copy(source.toPath(), output);
-                }
-                return "Файл сохранён. Системный шрифт пока не изменён.";
-            });
-        }
+                Files.move(temporary.toPath(), emojiFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                emojiChanged(info.familyName() + " · " + info.colorFormat(), false);
+            }
+            savePreferences(); return makePreview();
+        });
     }
 
     private String displayName(Uri uri) {
@@ -426,39 +465,70 @@ public final class MainActivity extends Activity {
             File temporary = new File(getCacheDir(), "active-emoji.ttf"); Files.write(temporary.toPath(), bytes);
             new Font.Builder(temporary).build();
             Files.move(temporary.toPath(), emojiFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            emojiName = info.familyName() + " · активные системные эмодзи";
-            verifiedEmoji = false;
+            emojiChanged(info.familyName() + " · активные системные эмодзи", false);
             savePreferences(); return makePreview();
         });
     }
 
     private void downloadEmoji() {
-        task("Загружаю проверенный iOS-набор · 35 МБ…", () -> {
-            File temporary = new File(getCacheDir(), "download-emoji.ttf");
+        task("Загружаю проверенный iOS-набор · 35 МБ…", () -> { downloadVerified(); savePreferences(); return makePreview(); });
+    }
+
+    /** Runs on the worker. The previous import stays until the new file passes every check. */
+    private void downloadVerified() throws Exception {
+        File temporary = new File(getCacheDir(), "download-emoji.ttf");
+        runOnUiThread(() -> { progress.setIndeterminate(false); progress.setMax(100); progress.setProgress(0); });
+        try {
             EmojiSource.download(temporary, bytes -> runOnUiThread(() -> {
-                if (!isFinishing() && !isDestroyed()) status.setText("Загружаю iOS-набор: " + bytes * 100 / EmojiSource.BYTES + "%");
+                if (isFinishing() || isDestroyed()) return;
+                int percent = (int) (bytes * 100 / EmojiSource.BYTES);
+                progress.setProgress(percent); status.setText("Загружаю iOS-набор: " + percent + "% из 35 МБ");
             }));
-            try (FontFile source = new FontFile(temporary)) {
-                SfntFont info = source.metadata(0);
-                if (!info.hasTable("CBDT") || !info.hasTable("GSUB")) throw new IOException("Набор не содержит нужных цветных таблиц и составных эмодзи");
+        } finally { runOnUiThread(() -> progress.setIndeterminate(true)); }
+        try (FontFile source = new FontFile(temporary)) {
+            SfntFont info = source.metadata(0);
+            if (!info.hasTable("CBDT") || !info.hasTable("GSUB")) throw new IOException("Набор не содержит нужных цветных таблиц и составных эмодзи");
+        }
+        new Font.Builder(temporary).build();
+        Files.move(temporary.toPath(), emojiFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        emojiChanged("iOS-набор · Emoji 17.0 · 3 944 эмодзи + 9 компонентов", true);
+    }
+
+    /** One tap: Sans → verified iOS set → Sans underline → TTF in Downloads. Skips finished steps. */
+    private void prepareIos() {
+        task("Готовлю iOS-эмодзи для zFont…", () -> {
+            String warning = "";
+            if (!textFile.isFile() || !textSupportsCyrillic) {
+                step("Ищу OPPO Sans…");
+                DeviceFonts.Candidate sans = bestSans();
+                if (sans != null) importSystemText(sans);
+                else if (!textFile.isFile()) warning = " OPPO Sans не найден: линия оставлена по умолчанию, выбери Sans вручную и повтори.";
             }
-            new Font.Builder(temporary).build();
-            Files.move(temporary.toPath(), emojiFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            emojiName = "iOS-набор · Emoji 17.0 · 3 944 эмодзи + 9 компонентов"; verifiedEmoji = true;
-            savePreferences(); return makePreview();
+            if (!verifiedEmoji) { step("Загружаю iOS-набор · 35 МБ…"); downloadVerified(); }
+            if (textFile.isFile()) { step("Переношу линию из " + shortName(textName) + "…"); applyTextMetrics(); }
+            savePreferences();
+            step("Готовлю копию для zFont…");
+            String previewMessage = makePreview();
+            if (!repairedFile.isFile()) throw new IOException(previewMessage);
+            String saved = save(EXPORT_FONT, IOS_EXPORT_NAME, "font/ttf");
+            return "Готово: Загрузки/OPPOMoji/" + saved + ". Импортируй его в zFont как emoji-шрифт." + warning;
         });
+    }
+
+    private void step(String message) {
+        runOnUiThread(() -> { if (!isFinishing() && !isDestroyed()) status.setText(message); });
     }
 
     private void savePreferences() {
         prefs.edit().putString("textName", textName).putString("emojiName", emojiName)
-                .putBoolean("verifiedEmoji", verifiedEmoji)
+                .putBoolean("verifiedEmoji", verifiedEmoji).putString("metricsSource", metricsSource)
                 .putInt("weight", weight).putInt("depth", depth).putInt("thickness", thickness).apply();
     }
 
     private void findTextFont() {
         task("Ищу доступные шрифты OPPO…", () -> {
             List<DeviceFonts.Candidate> candidates = DeviceFonts.candidates();
-            if (candidates.isEmpty()) return "Доступный файл OPPO Sans не найден. OPPO Serif не подходит. Сохрани отчёт кнопкой вверху — он поможет найти системное семейство Sans.";
+            if (candidates.isEmpty()) return "Доступный файл OPPO Sans не найден. OPPO Serif не подходит. Сохрани отчёт — он поможет найти системное семейство Sans.";
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 String[] names = new String[candidates.size()];
@@ -471,6 +541,11 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private static DeviceFonts.Candidate bestSans() {
+        for (DeviceFonts.Candidate font : DeviceFonts.candidates()) if (font.cyrillic) return font;
+        return null;
+    }
+
     private void loadSystemFont(DeviceFonts.Candidate source) {
         task("Проверяю OPPO Sans…", () -> {
             importSystemText(source); return makePreview();
@@ -480,24 +555,48 @@ public final class MainActivity extends Activity {
     private void importSystemText(DeviceFonts.Candidate source) throws Exception {
         byte[] bytes;
         try (FontFile font = new FontFile(source.file)) { bytes = font.extract(source.index); }
-        SfntFont info = new SfntFont(bytes); SfntFont.Axis axis = info.weightAxis();
+        SfntFont info = new SfntFont(bytes);
         File temporary = new File(getCacheDir(), "system-import.ttf"); Files.write(temporary.toPath(), bytes);
         new Font.Builder(temporary).build();
         Files.move(temporary.toPath(), textFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        weightAxis = axis; textName = info.familyName() + " · " + source.file.getName();
-        textSupportsCyrillic = supportsCyrillic(info);
-        if (axis != null) weight = Math.round(Math.max(axis.min, Math.min(axis.max, weight)));
+        textChanged(info, info.familyName() + " · " + source.file.getName());
         savePreferences();
+    }
+
+    private void textChanged(SfntFont info, String name) throws IOException {
+        weightAxis = info.weightAxis(); textName = name;
+        textSupportsCyrillic = supportsCyrillic(info); textClaimsEmoji = info.claimsEmojiPresentation();
+        if (weightAxis != null) weight = Math.round(Math.max(weightAxis.min, Math.min(weightAxis.max, weight)));
+        forgetCopies();
+    }
+
+    private void emojiChanged(String name, boolean verified) {
+        emojiName = name; verifiedEmoji = verified; forgetCopies();
+    }
+
+    private void deleteText() throws IOException {
+        Files.deleteIfExists(textFile.toPath()); Files.deleteIfExists(repairedTextFile.toPath());
+        weightAxis = null; textClaimsEmoji = false; textSupportsCyrillic = true; forgetCopies();
+    }
+
+    /** Sources changed: rebuild every derived copy on the next preview. */
+    private void forgetCopies() {
+        prefs.edit().remove(repairKeyName(repairedFile)).remove(repairKeyName(repairedTextFile)).apply();
     }
 
     private void useTextMetrics() {
         task("Считываю метрики шрифта текста…", () -> {
-            if (!textFile.isFile()) throw new IOException("Сначала найди OPPO Sans или открой файл шрифта текста");
-            SfntFont text = new SfntFont(DeviceFonts.read(textFile));
-            depth = Math.max(2, Math.min(25, Math.round(-text.underlinePosition() * 100f / text.unitsPerEm())));
-            thickness = Math.max(5, Math.min(80, Math.round(text.underlineThickness() * 1000f / text.unitsPerEm())));
-            savePreferences(); return makePreview();
+            applyTextMetrics(); savePreferences(); return makePreview();
         });
+    }
+
+    private void applyTextMetrics() throws IOException {
+        if (!textFile.isFile()) throw new IOException("Сначала найди OPPO Sans или открой файл шрифта текста");
+        SfntFont text;
+        try (FontFile source = new FontFile(textFile)) { text = source.metadata(0); }
+        depth = Math.max(2, Math.min(25, Math.round(-text.underlinePosition() * 100f / text.unitsPerEm())));
+        thickness = Math.max(5, Math.min(80, Math.round(text.underlineThickness() * 1000f / text.unitsPerEm())));
+        metricsSource = "text";
     }
 
     /** Generated files are local experimental exports, never automatically installed. */
@@ -511,7 +610,7 @@ public final class MainActivity extends Activity {
         Typeface interfaceFont = textFile.isFile() && textSupportsCyrillic ? typeface(textFile, emojiFile, 400) : null;
         runOnUiThread(() -> {
             if (isFinishing() || isDestroyed()) return;
-            before.setTypeface(originalResult); after.setTypeface(repairedResult);
+            before.setTypeface(originalResult); after.setTypeface(repairedResult); showcase.setTypeface(repairedResult);
             inputBefore.setTypeface(originalResult); inputAfter.setTypeface(repairedResult);
             restoreDemoSuggestion(inputBefore); restoreDemoSuggestion(inputAfter);
             interfaceTypeface = interfaceFont == null ? Typeface.DEFAULT : interfaceFont;
@@ -522,7 +621,7 @@ public final class MainActivity extends Activity {
             }
             textStatus.setText(textFile.isFile() ? textName + (textSupportsCyrillic ? "" : " · нет кириллицы: русские буквы из системного шрифта") : "Активный системный шрифт · OPPO Sans пока не подтверждён");
             emojiStatus.setText(emojiFile.isFile() ? emojiName : activeSystemEmoji != null
-                    ? activeSystemEmojiName + " · из системы, подключены к примерам. Для экспорта нажми «Взять активный emoji-шрифт»."
+                    ? activeSystemEmojiName + " · из системы, подключены к примерам"
                     : "Активные эмодзи недоступны для выбранного Sans: " + (activeSystemEmojiError == null ? "открой TTF/OTF или используй системный шрифт текста" : activeSystemEmojiError));
             if (weightAxis != null) {
                 int min = Math.max(1, (int) Math.ceil(weightAxis.min));
@@ -546,24 +645,56 @@ public final class MainActivity extends Activity {
             }
             depthSlider.setProgress(depth - 2); depthLabel.setText("Отступ от базовой линии: " + depth + "%");
             thicknessSlider.setProgress(thickness - 5); thicknessLabel.setText(thicknessText());
+            updateChecklist();
         });
         if (textError != null) message = "Исправление текста недоступно: " + textError;
         else if (repairedTextFile.isFile()) message = "Копия текстового шрифта готова. Ползунки меняют линию в исправленном примере; исходный пример сохраняет свою линию.";
         else if (repairedFile.isFile()) message = "Копия emoji-шрифта готова. Для изменения линии под буквами выбери текстовый шрифт.";
+        if (textClaimsEmoji) message += " Внимание: текстовый шрифт сам объявляет ©️ ‼️ и другие эмодзи с U+FE0F и в системе оставит их текстом.";
         if (emojiError != null) message += " Исправление эмодзи недоступно: " + emojiError;
         return message;
     }
 
+    private void updateChecklist() {
+        boolean sans = textFile.isFile() && textSupportsCyrillic;
+        boolean lineFromSans = sans && "text".equals(metricsSource) && repairedFile.isFile();
+        String key = prefs.getString(repairKeyName(repairedFile), null);
+        boolean exported = verifiedEmoji && repairedFile.isFile() && key != null && key.equals(prefs.getString("exported", null));
+        check(0, sans, sans ? shortName(textName) : "OPPO Sans не выбран");
+        check(1, verifiedEmoji, verifiedEmoji ? "iOS-набор Emoji 17.0 · 3 944 эмодзи" : "iOS-набор не загружен · 35 МБ");
+        check(2, lineFromSans, lineFromSans ? String.format(Locale.getDefault(), "Линия из OPPO Sans · %d%% / %.1f%%", depth, thickness / 10.0)
+                : "custom".equals(metricsSource) && repairedFile.isFile() ? "Линия задана вручную" : "Линия ещё не перенесена");
+        check(3, exported, exported ? "Сохранён " + IOS_EXPORT_NAME : "Файл для zFont не сохранён");
+    }
+
+    private void check(int index, boolean done, String text) {
+        checks[index].setText((done ? "✓  " : "○  ") + text);
+        checks[index].setTextColor(done ? DONE : MUTED);
+        checks[index].setContentDescription((done ? "Готово: " : "Не готово: ") + text);
+    }
+
+    private static String shortName(String name) {
+        int separator = name.indexOf(" · ");
+        return separator > 0 ? name.substring(0, separator) : name;
+    }
+
+    private static String repairKeyName(File target) { return "repair:" + target.getName(); }
+
+    /** Rewriting a 35 MB emoji font is slow; reuse the copy while its source and metrics stay the same. */
     private String repair(File source, File target) throws IOException {
+        if (!source.isFile()) { Files.deleteIfExists(target.toPath()); return null; }
+        String key = REPAIR_FORMAT + ":" + source.length() + ":" + source.lastModified() + ":" + depth + ":" + thickness;
+        if (target.isFile() && key.equals(prefs.getString(repairKeyName(target), null))) return null;
         Files.deleteIfExists(target.toPath());
-        if (!source.isFile()) return null;
         try {
             SfntFont font = new SfntFont(DeviceFonts.read(source));
             byte[] fixed = font.withUnderline(-Math.round(depth * font.unitsPerEm() / 100f),
                     Math.max(1, Math.round(thickness * font.unitsPerEm() / 1000f)));
-            Files.write(target.toPath(), fixed); new Font.Builder(target).build(); return null;
+            Files.write(target.toPath(), fixed); new Font.Builder(target).build();
+            prefs.edit().putString(repairKeyName(target), key).commit();
+            return null;
         } catch (Exception error) {
-            Files.deleteIfExists(target.toPath()); return error.getMessage();
+            Files.deleteIfExists(target.toPath()); prefs.edit().remove(repairKeyName(target)).commit(); return error.getMessage();
         }
     }
 
@@ -573,27 +704,34 @@ public final class MainActivity extends Activity {
 
     private Typeface typeface(File textFile, File emoji, int requestedWeight) throws Exception {
         // An emoji-only family must never become the primary family for letters or switch OEM sans to Roboto.
-        if (!textFile.isFile()) return Typeface.DEFAULT;
-        Font.Builder text = new Font.Builder(textFile);
-        if (weightAxis != null) text.setFontVariationSettings("'wght' " + requestedWeight).setWeight(Math.max(1, Math.min(1000, requestedWeight)));
-        FontFamily textFamily = new FontFamily.Builder(text.build()).build();
+        Font.Builder text = null;
+        if (textFile.isFile()) {
+            text = new Font.Builder(textFile);
+            if (weightAxis != null) text.setFontVariationSettings("'wght' " + requestedWeight).setWeight(Math.max(1, Math.min(1000, requestedWeight)));
+        }
+        FontFamily textFamily;
+        if (text != null) textFamily = new FontFamily.Builder(text.build()).build();
+        else if (emoji.isFile() && Build.VERSION.SDK_INT >= 31) {
+            // Without a chosen Sans, keep the system letters but still show the imported emoji.
+            try { textFamily = new FontFamily.Builder(SystemFontAccess.resolve("A")).build(); }
+            catch (IOException | RuntimeException error) { return Typeface.DEFAULT; }
+        } else return Typeface.DEFAULT;
         Typeface.CustomFallbackBuilder family = new Typeface.CustomFallbackBuilder(textFamily).setSystemFallback("sans-serif");
-        if (weightAxis != null) family.setStyle(new FontStyle(Math.max(1, Math.min(1000, requestedWeight)), FontStyle.FONT_SLANT_UPRIGHT));
+        if (weightAxis != null && text != null) family.setStyle(new FontStyle(Math.max(1, Math.min(1000, requestedWeight)), FontStyle.FONT_SLANT_UPRIGHT));
         Font emojiFont = emoji.isFile() ? new Font.Builder(emoji).build() : activeSystemEmoji;
         if (emojiFont != null) family.addCustomFallback(new FontFamily.Builder(emojiFont).build());
         return family.build();
     }
 
     private void instructions() {
-        new AlertDialog.Builder(this).setTitle("Проверка на твоём OPPO")
-                .setMessage("1. Выбери оригинальный OPPO Sans. При включённых эмодзи из zFont нажми «Взять активный emoji-шрифт из системы» или открой его TTF вручную.\n\n"
-                        + "2. Нажми «Взять метрики из OPPO Sans», затем подвигай ползунки и сравни исходный и исправленный примеры. Меняются метрики текста и эмодзи.\n\n"
-                        + "3. Сохрани нужную копию TTF в Загрузки/OPPOMoji и импортируй её в менеджер шрифтов, например zFont. Эта сборка экспортирует текст и эмодзи отдельно, не объединяя их в один пакет.\n\n"
-                        + "4. Проверь подчёркивания и штатный ползунок веса в настройках, сообщениях и браузере. Если стало хуже, верни стандартный шрифт и выключи поддержку Dai.\n\n"
-                        + "Без root нельзя гарантировать отдельную системную замену эмодзи и сохранение ползунка OPPO Sans. Приложения со своими эмодзи могут не учитывать системный шрифт.\n\n"
-                        + "Для сравнения сохрани два отчёта: с выключенным Dai и с включённым. После переключения закрой и снова открой OPPOMoji, затем сохрани отчёт.\n\n"
-                        + "Отчёт содержит модель, версию системы и настройки шрифтов; прочитай его перед отправкой.")
-                .setPositiveButton("Закрыть", null).show();
+        new AlertDialog.Builder(this).setTitle("Установка через zFont")
+                .setMessage("1. Нажми «Подготовить iOS-эмодзи для zFont». Приложение найдёт OPPO Sans, загрузит проверенный набор Emoji 17.0, перенесёт линию подчёркивания из OPPO Sans и сохранит " + IOS_EXPORT_NAME + " в Загрузки/OPPOMoji.\n\n"
+                        + "2. Импортируй этот файл в zFont 3 как emoji-шрифт и примени тем способом, который уже работает на твоей ColorOS (например, через поддержку Dai). Перезапусти телефон, если zFont попросит.\n\n"
+                        + "3. Проверь эмодзи в сообщениях, браузере и настройках: ☺️ ❤️ ©️ ‼️ 1️⃣ 🇷🇺 👨‍👩‍👧‍👦. Проверь подчёркивания и штатный ползунок веса.\n\n"
+                        + "4. Если стало хуже, верни стандартный шрифт в zFont и выключи поддержку Dai.\n\n"
+                        + "Приложения со своими эмодзи (Telegram, WhatsApp с встроенным набором, клавиатуры с картинками) могут не учитывать системный шрифт. Без root нельзя гарантировать отдельную замену эмодзи с сохранением ползунка OPPO Sans.\n\n"
+                        + "Для разбора проблем сохрани два отчёта: с выключенным и включённым Dai, каждый раз после перезапуска OPPOMoji. Отчёт содержит модель, версию системы и настройки шрифтов; прочитай его перед отправкой.")
+                .setPositiveButton("Понятно", null).show();
     }
 
     private void openDisplaySettings() {
@@ -603,12 +741,12 @@ public final class MainActivity extends Activity {
 
     private void resetFonts() {
         new AlertDialog.Builder(this).setTitle("Убрать импортированные шрифты?")
-                .setMessage("Удалятся локальные копии из OPPOMoji. Исходные файлы и шрифты системы сохранятся.")
+                .setMessage("Удалятся локальные копии из OPPOMoji. Исходные файлы, сохранённые в Загрузки, и шрифты системы останутся.")
                 .setNegativeButton("Отмена", null).setPositiveButton("Убрать копии", (dialog, which) ->
                         task("Убираю локальные копии…", () -> {
-                            Files.deleteIfExists(textFile.toPath()); Files.deleteIfExists(emojiFile.toPath()); Files.deleteIfExists(repairedFile.toPath()); Files.deleteIfExists(repairedTextFile.toPath());
-                            weightAxis = null; textName = "Системный шрифт"; emojiName = "Системные эмодзи";
-                            verifiedEmoji = false;
+                            deleteText(); Files.deleteIfExists(emojiFile.toPath()); Files.deleteIfExists(repairedFile.toPath());
+                            textName = "Системный шрифт"; emojiName = "Системные эмодзи";
+                            verifiedEmoji = false; metricsSource = "default";
                             savePreferences(); return makePreview();
                         })).show();
     }
@@ -620,7 +758,7 @@ public final class MainActivity extends Activity {
         WORKER.execute(() -> {
             String outcome;
             try { outcome = work.run(); }
-            catch (Exception error) { outcome = "Не удалось завершить: " + (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()); }
+            catch (Exception | OutOfMemoryError error) { outcome = "Не удалось завершить: " + (error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()); }
             String result = outcome;
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
@@ -631,9 +769,11 @@ public final class MainActivity extends Activity {
 
     private void setBusy(boolean value) {
         busy = value;
+        progress.setVisibility(value ? View.VISIBLE : View.INVISIBLE);
         for (Button button : actions) button.setEnabled(!value);
         weightSlider.setEnabled(!value && weightAxis != null);
-        depthSlider.setEnabled(!value && repairedTextFile.isFile()); thicknessSlider.setEnabled(!value && repairedTextFile.isFile());
+        boolean editable = repairedTextFile.isFile() || repairedFile.isFile();
+        depthSlider.setEnabled(!value && editable); thicknessSlider.setEnabled(!value && editable);
         exportFont.setEnabled(!value && repairedFile.isFile()); exportText.setEnabled(!value && textFile.isFile());
         exportFixedText.setEnabled(!value && repairedTextFile.isFile());
         findViewById(R.id.export_original_emoji).setEnabled(!value && emojiFile.isFile());
@@ -656,7 +796,7 @@ public final class MainActivity extends Activity {
     }
     private void heading(TextView view) { view.setAccessibilityHeading(true); }
     private void section(LinearLayout parent, String number, String title) {
-        TextView view = label(number + "   " + title, 19, WHITE); view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        TextView view = label(number.isEmpty() ? title : number + "   " + title, 19, WHITE); view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         boldInterfaceText.add(view);
         heading(view); parent.addView(view);
     }
@@ -666,6 +806,15 @@ public final class MainActivity extends Activity {
         button.setMinHeight(dp(52)); button.setTextColor(ColorStateList.valueOf(WHITE));
         button.setBackgroundTintList(new ColorStateList(new int[][]{new int[]{android.R.attr.state_enabled}, new int[]{}}, new int[]{Color.rgb(45, 57, 78), Color.rgb(44, 45, 49)}));
         button.setPadding(dp(12), dp(8), dp(12), dp(8)); button.setOnClickListener(listener); actions.add(button); return button;
+    }
+    private Button primaryButton(String text, View.OnClickListener listener) {
+        Button button = button(text, listener); button.setTextSize(15); button.setMinHeight(dp(58));
+        button.setTextColor(new ColorStateList(new int[][]{new int[]{android.R.attr.state_enabled}, new int[]{}}, new int[]{BG, MUTED}));
+        button.setBackgroundTintList(new ColorStateList(new int[][]{new int[]{android.R.attr.state_enabled}, new int[]{}}, new int[]{PRIMARY, Color.rgb(44, 45, 49)}));
+        boldInterfaceText.add(button); return button;
+    }
+    private LinearLayout.LayoutParams spaced(int top) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = dp(top); return params;
     }
     private void space(View view, int height) {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = dp(height); view.setLayoutParams(params);

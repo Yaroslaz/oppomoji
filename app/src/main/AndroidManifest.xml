@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:allowBackup="false"
+        android:largeHeap="true"
         android:label="OPPOMoji"
         android:icon="@drawable/ic_launcher"
         android:theme="@style/AppTheme"

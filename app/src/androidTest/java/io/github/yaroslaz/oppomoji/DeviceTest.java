@@ -286,7 +286,7 @@ public class DeviceTest {
                         TextView view = activity.findViewById(id);
                         assertEquals(simulated, SystemFontAccess.resolve("😀", view.getPaint()).getFile());
                         File text = SystemFontAccess.resolve("Я", view.getPaint()).getFile();
-                        assertTrue(text.getName().equals("text.ttf") || text.getName().equals("text-repaired.ttf"));
+                        assertTrue(text.getName().startsWith("text") && text.getParentFile().equals(context.getFilesDir()));
                         org.json.JSONObject snapshot = LineDiagnostics.snapshot(view);
                         assertEquals(simulated.getAbsolutePath(), snapshot.getJSONObject("resolvedFonts").getJSONObject("emoji").getString("file"));
                     } catch (Exception error) { throw new AssertionError(error); }
@@ -339,7 +339,8 @@ public class DeviceTest {
                 after.set(((TextView) activity.findViewById(R.id.preview_after)).getTypeface());
             });
             java.util.List<String> failures = new java.util.ArrayList<>();
-            org.json.JSONArray extraGlyphs = new org.json.JSONArray();
+            org.json.JSONArray extraGlyphs = new org.json.JSONArray(), textInPreview = new org.json.JSONArray();
+            SfntFont textFont = new SfntFont(DeviceFonts.read(roboto()));
             int total = 0, qualified = 0, components = 0;
             try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(
                     context.getAssets().open("emoji-17.0.txt"), java.nio.charset.StandardCharsets.UTF_8))) {
@@ -350,29 +351,30 @@ public class DeviceTest {
                     for (String cp : row[0].split(" ")) text.appendCodePoint(Integer.parseInt(cp, 16));
                     total++; if (row[1].equals("fully-qualified")) qualified++; else components++;
                     for (boolean fixed : new boolean[]{false, true}) {
-                        Paint paint = new Paint(); paint.setTextSize(48); paint.setTypeface(fixed ? after.get() : before.get());
-                        android.graphics.text.PositionedGlyphs glyphs = android.graphics.text.TextRunShaper.shapeTextRun(
-                                text, 0, text.length(), 0, text.length(), 0, 0, false, paint);
                         File expected = new File(context.getFilesDir(), fixed ? "emoji-repaired.ttf" : "emoji.ttf");
-                        int visible = 0; boolean correctSource = true;
                         org.json.JSONArray details = new org.json.JSONArray();
-                        for (int i = 0; i < glyphs.glyphCount(); i++) {
-                            android.graphics.RectF bounds = new android.graphics.RectF(); Font font = glyphs.getFont(i);
-                            font.getGlyphBounds(glyphs.getGlyphId(i), paint, bounds);
-                            boolean ink = !bounds.isEmpty();
-                            if (ink) { visible++; correctSource &= glyphs.getGlyphId(i) != 0 && expected.equals(font.getFile()); }
-                            details.put(new org.json.JSONObject().put("id", glyphs.getGlyphId(i)).put("ink", ink)
-                                    .put("file", font.getFile() == null ? "<buffer>" : font.getFile().getAbsolutePath())
-                                    .put("bounds", bounds.toString()));
+                        int glyphCount = verifyGlyphs(text, fixed ? after.get() : before.get(), expected, details);
+                        if (glyphCount != 1) extraGlyphs.put(new org.json.JSONObject().put("codes", row[0]).put("fixed", fixed).put("glyphs", details));
+                        if (glyphCount > 0) continue;
+                        // A custom fallback family cannot carry the und-Zsye emoji tag, so a text font that covers
+                        // the base of "©️" keeps it in the preview. Installed system emoji are tagged; check the file itself.
+                        if (text.indexOf("\uFE0F") > 0 && textFont.hasCodePoint(text.codePointAt(0))) {
+                            Typeface emojiFirst = new Typeface.CustomFallbackBuilder(new FontFamily.Builder(new Font.Builder(expected).build()).build()).build();
+                            org.json.JSONArray direct = new org.json.JSONArray();
+                            if (verifyGlyphs(text, emojiFirst, expected, direct) > 0) {
+                                if (!fixed) textInPreview.put(row[0]);
+                                continue;
+                            }
+                            details = direct;
                         }
-                        if (glyphs.glyphCount() != 1) extraGlyphs.put(new org.json.JSONObject().put("codes", row[0]).put("fixed", fixed).put("glyphs", details));
-                        if (visible != 1 || !correctSource) {
-                            failures.add(row[0] + " " + row[2] + " (fixed=" + fixed + ", visible=" + visible + ", details=" + details + ")");
-                        }
+                        failures.add(row[0] + " " + row[2] + " (fixed=" + fixed + ", details=" + details + ")");
                     }
                 }
             }
             org.json.JSONObject result = new org.json.JSONObject().put("fullyQualified", qualified).put("components", components)
+                    .put("textFont", roboto().getName()).put("textClaimsEmojiPresentation", textFont.claimsEmojiPresentation())
+                    .put("textHasCopyrightFe0f", textFont.hasVariationSequence(0xA9, 0xFE0F))
+                    .put("textPresentationInCustomPreview", textInPreview)
                     .put("total", total).put("typefacesChecked", 2).put("failures", new org.json.JSONArray(failures)).put("extraRawGlyphs", extraGlyphs);
             Files.write(new File(context.getExternalFilesDir(null), "emoji-set-verification.json").toPath(), result.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             assertEquals(3944, qualified); assertEquals(9, components); assertEquals(3953, total);
@@ -386,6 +388,64 @@ public class DeviceTest {
             frame(scenario); screenshot("05-full-emoji-set.png");
             assertTrue("Selected emoji font failed: " + failures.subList(0, Math.min(8, failures.size())), failures.isEmpty());
         }
+    }
+
+    @Test public void oneTapPreparesIosEmojiWithSansUnderline() throws Exception {
+        File prepared = new File(context.getExternalFilesDir(null), "verified-emoji.ttf");
+        assertTrue("Prepare the pinned font with tools/prepare_emoji.py and push it into the app's external files", prepared.isFile());
+        // As if the verified download already finished; the network step itself is covered by SHA-256 in EmojiSource.
+        Files.copy(prepared.toPath(), new File(context.getFilesDir(), "emoji.ttf").toPath());
+        context.getSharedPreferences("fonts", Context.MODE_PRIVATE).edit().putBoolean("verifiedEmoji", true).commit();
+        android.app.Instrumentation instrumentation = InstrumentationRegistry.getInstrumentation();
+        android.app.Instrumentation.ActivityMonitor picker = instrumentation.addMonitor(new android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT), null, true);
+        Uri[] exported = {null};
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            await(scenario, "Копия emoji-шрифта готова");
+            scenario.onActivity(activity -> activity.onActivityResult(10, Activity.RESULT_OK, new Intent().setData(Uri.fromFile(roboto()))));
+            await(scenario, "Копия текстового шрифта готова");
+            scenario.onActivity(activity -> activity.findViewById(R.id.prepare_ios).performClick());
+            await(scenario, "Готово: Загрузки/OPPOMoji/");
+            scenario.onActivity(activity -> exported[0] = activity.lastFontUri);
+            assertNotNull(exported[0]); assertEquals(0, picker.getHits());
+            SfntFont text = new SfntFont(DeviceFonts.read(roboto()));
+            SfntFont font = new SfntFont(DeviceFonts.read(context.getContentResolver().openInputStream(exported[0]), SfntFont.MAX_BYTES));
+            int depth = Math.max(2, Math.min(25, Math.round(-text.underlinePosition() * 100f / text.unitsPerEm())));
+            assertEquals(-Math.round(depth * font.unitsPerEm() / 100f), font.underlinePosition());
+            assertTrue(font.hasTable("CBDT")); assertTrue(font.hasVariationSequence(0xA9, 0xFE0F));
+            scenario.onActivity(activity -> {
+                try {
+                    TextView before = activity.findViewById(R.id.preview_before), after = activity.findViewById(R.id.preview_after);
+                    assertEquals(new File(context.getFilesDir(), "emoji.ttf"), SystemFontAccess.resolve("😀", before.getPaint()).getFile());
+                    assertEquals(new File(context.getFilesDir(), "emoji-repaired.ttf"), SystemFontAccess.resolve("👨‍👩‍👧‍👦", after.getPaint()).getFile());
+                    // Plain letters and digits stay in the text font.
+                    assertTrue(SystemFontAccess.resolve("1", after.getPaint()).getFile().getName().startsWith("text"));
+                    TextView showcase = activity.findViewById(R.id.emoji_showcase);
+                    assertEquals(new File(context.getFilesDir(), "emoji-repaired.ttf"), SystemFontAccess.resolve("😀", showcase.getPaint()).getFile());
+                } catch (java.io.IOException error) { throw new AssertionError(error); }
+            });
+            awaitLayout(scenario, R.id.emoji_showcase); frame(scenario); screenshot("06-one-tap.png");
+        } finally {
+            instrumentation.removeMonitor(picker);
+            if (exported[0] != null) context.getContentResolver().delete(exported[0], null, null);
+        }
+    }
+
+    /** Returns the glyph count when exactly one visible glyph comes from the expected file, otherwise -1. */
+    private static int verifyGlyphs(CharSequence text, Typeface typeface, File expected, org.json.JSONArray details) throws org.json.JSONException {
+        Paint paint = new Paint(); paint.setTextSize(48); paint.setTypeface(typeface);
+        android.graphics.text.PositionedGlyphs glyphs = android.graphics.text.TextRunShaper.shapeTextRun(
+                text, 0, text.length(), 0, text.length(), 0, 0, false, paint);
+        int visible = 0; boolean correctSource = true;
+        for (int i = 0; i < glyphs.glyphCount(); i++) {
+            android.graphics.RectF bounds = new android.graphics.RectF(); Font font = glyphs.getFont(i);
+            font.getGlyphBounds(glyphs.getGlyphId(i), paint, bounds);
+            boolean ink = !bounds.isEmpty();
+            if (ink) { visible++; correctSource &= glyphs.getGlyphId(i) != 0 && expected.equals(font.getFile()); }
+            details.put(new org.json.JSONObject().put("id", glyphs.getGlyphId(i)).put("ink", ink)
+                    .put("file", font.getFile() == null ? "<buffer>" : font.getFile().getAbsolutePath())
+                    .put("bounds", bounds.toString()));
+        }
+        return visible == 1 && correctSource ? glyphs.glyphCount() : -1;
     }
 
     private static void setProgress(SeekBar slider, int value) {

@@ -15,6 +15,7 @@ import java.util.Map;
 public final class SfntFont {
     public static final int MAX_BYTES = 64 * 1024 * 1024;
     private static final long CHECKSUM_MAGIC = 0xB1B0AFBAL;
+    private static final int EMOJI_PRESENTATION = 0xFE0F;
     private final byte[] source;
     private final Map<String, Table> tables = new LinkedHashMap<>();
 
@@ -175,6 +176,70 @@ public final class SfntFont {
         return false;
     }
 
+    /** Code point + selector from cmap format 14, for example U+00A9 U+FE0F. */
+    public boolean hasVariationSequence(int codePoint, int selector) {
+        Table cmap = tables.get("cmap");
+        if (cmap == null) return false;
+        ByteBuffer data = ByteBuffer.wrap(Arrays.copyOfRange(source, cmap.offset, cmap.offset + cmap.length));
+        for (int sub : variationSubtables(data)) {
+            long end = sub + (data.getInt(sub + 2) & 0xffffffffL), records = data.getInt(sub + 6) & 0xffffffffL;
+            for (int i = 0; i < records; i++) {
+                int record = sub + 10 + i * 11;
+                if (u24(data, record) != selector) continue;
+                long defaults = data.getInt(record + 3) & 0xffffffffL, mapped = data.getInt(record + 7) & 0xffffffffL;
+                if (defaults != 0 && sub + defaults + 4 <= end) {
+                    int table = (int) (sub + defaults); long ranges = data.getInt(table) & 0xffffffffL;
+                    for (int r = 0; r < ranges && table + 8L + r * 4L <= end; r++) {
+                        int start = u24(data, table + 4 + r * 4), extra = data.get(table + 7 + r * 4) & 0xff;
+                        if (codePoint >= start && codePoint <= start + extra && hasCodePoint(codePoint)) return true;
+                    }
+                }
+                if (mapped != 0 && sub + mapped + 4 <= end) {
+                    int table = (int) (sub + mapped); long count = data.getInt(table) & 0xffffffffL;
+                    for (int m = 0; m < count && table + 9L + m * 5L <= end; m++) {
+                        if (u24(data, table + 4 + m * 5) == codePoint && data.getShort(table + 7 + m * 5) != 0) return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /** A primary text font that lists U+FE0F sequences keeps ©️ ‼️ even from the system emoji font. */
+    public boolean claimsEmojiPresentation() {
+        Table cmap = tables.get("cmap");
+        if (cmap == null || hasTable("CBDT") || hasTable("COLR") || hasTable("sbix") || hasTable("SVG ")) return false;
+        ByteBuffer data = ByteBuffer.wrap(Arrays.copyOfRange(source, cmap.offset, cmap.offset + cmap.length));
+        for (int sub : variationSubtables(data)) {
+            long records = data.getInt(sub + 6) & 0xffffffffL;
+            for (int i = 0; i < records; i++) {
+                int record = sub + 10 + i * 11;
+                if (u24(data, record) == EMOJI_PRESENTATION && (data.getInt(record + 3) != 0 || data.getInt(record + 7) != 0)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<Integer> variationSubtables(ByteBuffer cmap) {
+        List<Integer> result = new ArrayList<>();
+        int size = cmap.capacity();
+        if (size < 4) return result;
+        int count = cmap.getShort(2) & 0xffff;
+        if (4L + 8L * count > size) return result;
+        for (int i = 0; i < count; i++) {
+            long relative = cmap.getInt(4 + i * 8 + 4) & 0xffffffffL;
+            if (relative + 10 > size || (cmap.getShort((int) relative) & 0xffff) != 14 || result.contains((int) relative)) continue;
+            long length = cmap.getInt((int) relative + 2) & 0xffffffffL, records = cmap.getInt((int) relative + 6) & 0xffffffffL;
+            if (length < 10 || relative + length > size || 10L + 11L * records > length) continue;
+            result.add((int) relative);
+        }
+        return result;
+    }
+
+    private static int u24(ByteBuffer data, int offset) {
+        return (data.get(offset) & 0xff) << 16 | (data.get(offset + 1) & 0xff) << 8 | data.get(offset + 2) & 0xff;
+    }
+
     public String colorFormat() {
         if (hasTable("CBDT") && hasTable("CBLC")) return "CBDT/CBLC";
         if (hasTable("COLR") && hasTable("CPAL")) return "COLR/CPAL";
@@ -189,6 +254,7 @@ public final class SfntFont {
         result.put("unitsPerEm", unitsPerEm()); result.put("ascent", ascent()); result.put("descent", descent());
         result.put("color", colorFormat()); result.put("tables", tableTags());
         result.put("supportsCyrillicSample", hasCodePoint('Я') && hasCodePoint('я') && hasCodePoint('щ'));
+        result.put("claimsEmojiPresentation", claimsEmojiPresentation());
         if (hasTable("post")) {
             result.put("underlinePosition", underlinePosition()); result.put("underlineThickness", underlineThickness());
         }
@@ -204,6 +270,14 @@ public final class SfntFont {
             throw invalid("Метрики линии выходят за допустимый диапазон");
         }
         require("post", 32);
+        Map<String, byte[]> copies = copies();
+        ByteBuffer post = ByteBuffer.wrap(copies.get("post")).order(ByteOrder.BIG_ENDIAN);
+        post.putShort(8, (short) position); post.putShort(10, (short) thickness);
+        if (copies.containsKey("MVAR")) copies.put("MVAR", withoutUnderlineVariations(copies.get("MVAR")));
+        return pack(buffer().getInt(0), copies);
+    }
+
+    private Map<String, byte[]> copies() {
         Map<String, byte[]> copies = new LinkedHashMap<>();
         List<String> tags = tableTags();
         Collections.sort(tags);
@@ -213,10 +287,7 @@ public final class SfntFont {
             Table table = tables.get(tag);
             copies.put(tag, Arrays.copyOfRange(source, table.offset, table.offset + table.length));
         }
-        ByteBuffer post = ByteBuffer.wrap(copies.get("post")).order(ByteOrder.BIG_ENDIAN);
-        post.putShort(8, (short) position); post.putShort(10, (short) thickness);
-        if (copies.containsKey("MVAR")) copies.put("MVAR", withoutUnderlineVariations(copies.get("MVAR")));
-        return pack(buffer().getInt(0), copies);
+        return copies;
     }
 
     /** Keep unrelated metric variations and their store offsets intact. */
