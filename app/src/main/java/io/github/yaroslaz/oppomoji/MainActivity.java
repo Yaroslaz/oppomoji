@@ -58,14 +58,14 @@ public final class MainActivity extends Activity {
     /** Bump when the repaired copies change for reasons other than the slider values. */
     private static final String REPAIR_FORMAT = "2";
     static final String IOS_EXPORT_NAME = "OPPOMoji-iOS-emoji.ttf";
-    private static final String SHOWCASE = "😀 😂 🥹 😍 🥰 😎 🤔 😭\n👍 👏 🙏 🫶 🤌 👀 🙈 💯\n❤️ 🔥 ✨ 🎉 ✅ ❤️‍🔥 🫠 🥲\n©️ ‼️ 1️⃣ 🇷🇺 👨‍👩‍👧‍👦 🙂‍↕️ 🫪 🫯";
+    private static final String SHOWCASE = "😀 😂 🥹 😍 🥰 😎 🤔 😭\n👍 👏 🙏 🫶 🤌 👀 🙈 💯\n❤️ 🔥 ✨ 🎉 ✅ ❤️‍🔥 🫠 🥲\n🐱 🍕 🚀 🇷🇺 👨‍👩‍👧‍👦 🙂‍↕️ 🫪 🫯";
     // Serialize file operations across Activity recreation as well as within one screen.
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
     private final List<Button> actions = new ArrayList<>();
     private final List<TextView> interfaceText = new ArrayList<>();
     private final List<TextView> boldInterfaceText = new ArrayList<>();
     private final TextView[] checks = new TextView[4];
-    private File textFile, previewTextFile, emojiFile, repairedFile, repairedTextFile;
+    private File textFile, emojiFile, repairedFile, repairedTextFile;
     private SharedPreferences prefs;
     private TextView textStatus, emojiStatus, status, weightLabel, depthLabel, thicknessLabel, before, after, showcase;
     private ProgressBar progress;
@@ -93,7 +93,6 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         prefs = getSharedPreferences("fonts", MODE_PRIVATE);
         textFile = new File(getFilesDir(), "text.ttf");
-        previewTextFile = new File(getFilesDir(), "text-preview.ttf");
         emojiFile = new File(getFilesDir(), "emoji.ttf");
         repairedFile = new File(getFilesDir(), "emoji-repaired.ttf");
         repairedTextFile = new File(getFilesDir(), "text-repaired.ttf");
@@ -206,6 +205,7 @@ public final class MainActivity extends Activity {
         before = sample(); before.setId(R.id.preview_before); preview.addView(before);
         TextView repairedLabel = label("Копия с выбранными метриками линии", 12, PRIMARY); space(repairedLabel, 18); preview.addView(repairedLabel);
         after = sample(); after.setId(R.id.preview_after); preview.addView(after);
+        preview.addView(label("©️ ™️ ⁉️ #️⃣ здесь могут выглядеть текстом: Android не даёт приложению пометить свой шрифт как эмодзи, и такие символы забирает текстовый шрифт. Установленный через zFont шрифт становится системным, и там их выбирает emoji-семейство.", 12, MUTED));
         preview.addView(label("Поле ввода: исходный шрифт", 12, PRIMARY));
         inputBefore = inputSample(); inputBefore.setId(R.id.input_before); preview.addView(inputBefore);
         preview.addView(label("Поле ввода: исправленная копия", 12, PRIMARY));
@@ -363,7 +363,6 @@ public final class MainActivity extends Activity {
             JSONObject report = DeviceFonts.report(this, textFile, emojiFile, repairedFile, weight, depth, thickness);
             report.put("lineLayouts", layouts);
             report.put("previewEmojiSource", emojiFile.isFile() ? "imported-file" : activeSystemEmoji != null ? "active-system-font" : "system-fallback");
-            report.put("previewTextReleasesEmojiPresentation", previewTextFile.isFile());
             report.put("underlineMetricsSource", metricsSource);
             if (verifiedEmoji) report.put("verifiedEmojiSet", new JSONObject().put("unicodeVersion", "17.0")
                     .put("sourceUrl", EmojiSource.URL).put("sourceSha256BeforeRepair", EmojiSource.SHA256)
@@ -576,13 +575,13 @@ public final class MainActivity extends Activity {
     }
 
     private void deleteText() throws IOException {
-        Files.deleteIfExists(textFile.toPath()); Files.deleteIfExists(repairedTextFile.toPath()); Files.deleteIfExists(previewTextFile.toPath());
+        Files.deleteIfExists(textFile.toPath()); Files.deleteIfExists(repairedTextFile.toPath());
         weightAxis = null; textClaimsEmoji = false; textSupportsCyrillic = true; forgetCopies();
     }
 
     /** Sources changed: rebuild every derived copy on the next preview. */
     private void forgetCopies() {
-        prefs.edit().remove(repairKeyName(repairedFile)).remove(repairKeyName(repairedTextFile)).remove("previewText").apply();
+        prefs.edit().remove(repairKeyName(repairedFile)).remove(repairKeyName(repairedTextFile)).apply();
     }
 
     private void useTextMetrics() {
@@ -603,13 +602,12 @@ public final class MainActivity extends Activity {
     /** Generated files are local experimental exports, never automatically installed. */
     private String makePreview() throws Exception {
         String message = "Предпросмотр готов. Изменения действуют внутри OPPOMoji.";
-        String textError = repair(textFile, repairedTextFile, true);
-        String emojiError = repair(emojiFile, repairedFile, false);
-        File text = previewText();
-        Typeface originalResult = typeface(text, emojiFile);
-        Typeface repairedResult = typeface(repairedTextFile.isFile() ? repairedTextFile : text,
+        String textError = repair(textFile, repairedTextFile);
+        String emojiError = repair(emojiFile, repairedFile);
+        Typeface originalResult = typeface(textFile, emojiFile);
+        Typeface repairedResult = typeface(repairedTextFile.isFile() ? repairedTextFile : textFile,
                 repairedFile.isFile() ? repairedFile : emojiFile);
-        Typeface interfaceFont = textFile.isFile() && textSupportsCyrillic ? typeface(text, emojiFile, 400) : null;
+        Typeface interfaceFont = textFile.isFile() && textSupportsCyrillic ? typeface(textFile, emojiFile, 400) : null;
         runOnUiThread(() -> {
             if (isFinishing() || isDestroyed()) return;
             before.setTypeface(originalResult); after.setTypeface(repairedResult); showcase.setTypeface(repairedResult);
@@ -652,7 +650,7 @@ public final class MainActivity extends Activity {
         if (textError != null) message = "Исправление текста недоступно: " + textError;
         else if (repairedTextFile.isFile()) message = "Копия текстового шрифта готова. Ползунки меняют линию в исправленном примере; исходный пример сохраняет свою линию.";
         else if (repairedFile.isFile()) message = "Копия emoji-шрифта готова. Для изменения линии под буквами выбери текстовый шрифт.";
-        if (textClaimsEmoji) message += " Текстовый шрифт перехватывал ©️ ‼️ и другие эмодзи с U+FE0F: в примерах и копиях они переданы emoji-шрифту.";
+        if (textClaimsEmoji) message += " Внимание: текстовый шрифт сам объявляет ©️ ‼️ и другие эмодзи с U+FE0F и в системе оставит их текстом.";
         if (emojiError != null) message += " Исправление эмодзи недоступно: " + emojiError;
         return message;
     }
@@ -683,7 +681,7 @@ public final class MainActivity extends Activity {
     private static String repairKeyName(File target) { return "repair:" + target.getName(); }
 
     /** Rewriting a 35 MB emoji font is slow; reuse the copy while its source and metrics stay the same. */
-    private String repair(File source, File target, boolean text) throws IOException {
+    private String repair(File source, File target) throws IOException {
         if (!source.isFile()) { Files.deleteIfExists(target.toPath()); return null; }
         String key = REPAIR_FORMAT + ":" + source.length() + ":" + source.lastModified() + ":" + depth + ":" + thickness;
         if (target.isFile() && key.equals(prefs.getString(repairKeyName(target), null))) return null;
@@ -691,27 +689,12 @@ public final class MainActivity extends Activity {
         try {
             SfntFont font = new SfntFont(DeviceFonts.read(source));
             byte[] fixed = font.withUnderline(-Math.round(depth * font.unitsPerEm() / 100f),
-                    Math.max(1, Math.round(thickness * font.unitsPerEm() / 1000f)), text);
+                    Math.max(1, Math.round(thickness * font.unitsPerEm() / 1000f)));
             Files.write(target.toPath(), fixed); new Font.Builder(target).build();
             prefs.edit().putString(repairKeyName(target), key).commit();
             return null;
         } catch (Exception error) {
             Files.deleteIfExists(target.toPath()); prefs.edit().remove(repairKeyName(target)).commit(); return error.getMessage();
-        }
-    }
-
-    /** The text font for "before" samples: original metrics, but U+FE0F sequences left to the emoji font. */
-    private File previewText() throws IOException {
-        if (!textFile.isFile() || !textClaimsEmoji) { Files.deleteIfExists(previewTextFile.toPath()); return textFile; }
-        String key = REPAIR_FORMAT + ":" + textFile.length() + ":" + textFile.lastModified();
-        if (previewTextFile.isFile() && key.equals(prefs.getString("previewText", null))) return previewTextFile;
-        try {
-            Files.write(previewTextFile.toPath(), new SfntFont(DeviceFonts.read(textFile)).withoutEmojiPresentation());
-            new Font.Builder(previewTextFile).build();
-            prefs.edit().putString("previewText", key).commit();
-            return previewTextFile;
-        } catch (IOException | RuntimeException error) {
-            Files.deleteIfExists(previewTextFile.toPath()); return textFile;
         }
     }
 

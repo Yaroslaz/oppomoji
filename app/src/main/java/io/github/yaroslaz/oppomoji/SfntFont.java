@@ -15,7 +15,7 @@ import java.util.Map;
 public final class SfntFont {
     public static final int MAX_BYTES = 64 * 1024 * 1024;
     private static final long CHECKSUM_MAGIC = 0xB1B0AFBAL;
-    static final int EMOJI_PRESENTATION = 0xFE0F;
+    private static final int EMOJI_PRESENTATION = 0xFE0F;
     private final byte[] source;
     private final Map<String, Table> tables = new LinkedHashMap<>();
 
@@ -205,7 +205,7 @@ public final class SfntFont {
         return false;
     }
 
-    /** True when a monochrome text font claims U+FE0F emoji presentation for some characters. */
+    /** A primary text font that lists U+FE0F sequences keeps ©️ ‼️ even from the system emoji font. */
     public boolean claimsEmojiPresentation() {
         Table cmap = tables.get("cmap");
         if (cmap == null || hasTable("CBDT") || hasTable("COLR") || hasTable("sbix") || hasTable("SVG ")) return false;
@@ -218,25 +218,6 @@ public final class SfntFont {
             }
         }
         return false;
-    }
-
-    /**
-     * Android picks a font for "©️" by the U+FE0F sequence. If the primary text font lists it in
-     * cmap format 14, the colour emoji fallback never gets it. Clearing only that selector keeps
-     * U+FE0E text presentation and every glyph intact.
-     */
-    static int releaseEmojiPresentation(byte[] cmap) {
-        ByteBuffer data = ByteBuffer.wrap(cmap);
-        int released = 0;
-        for (int sub : variationSubtables(data)) {
-            long records = data.getInt(sub + 6) & 0xffffffffL;
-            for (int i = 0; i < records; i++) {
-                int record = sub + 10 + i * 11;
-                if (u24(data, record) != EMOJI_PRESENTATION || (data.getInt(record + 3) == 0 && data.getInt(record + 7) == 0)) continue;
-                data.putInt(record + 3, 0).putInt(record + 7, 0); released++;
-            }
-        }
-        return released;
     }
 
     private static List<Integer> variationSubtables(ByteBuffer cmap) {
@@ -285,11 +266,6 @@ public final class SfntFont {
 
     /** Position/thickness in font units. Rebuilds all checksums; original bytes stay untouched. */
     public byte[] withUnderline(int position, int thickness) throws IOException {
-        return withUnderline(position, thickness, false);
-    }
-
-    /** As above; text copies may also hand U+FE0F sequences to the emoji fallback. */
-    public byte[] withUnderline(int position, int thickness, boolean releaseEmoji) throws IOException {
         if (position < -unitsPerEm() || position > 0 || thickness < 1 || thickness > unitsPerEm() / 4) {
             throw invalid("Метрики линии выходят за допустимый диапазон");
         }
@@ -298,14 +274,6 @@ public final class SfntFont {
         ByteBuffer post = ByteBuffer.wrap(copies.get("post")).order(ByteOrder.BIG_ENDIAN);
         post.putShort(8, (short) position); post.putShort(10, (short) thickness);
         if (copies.containsKey("MVAR")) copies.put("MVAR", withoutUnderlineVariations(copies.get("MVAR")));
-        if (releaseEmoji && copies.containsKey("cmap")) releaseEmojiPresentation(copies.get("cmap"));
-        return pack(buffer().getInt(0), copies);
-    }
-
-    /** Same metrics and glyphs; only U+FE0F sequences move to the emoji fallback. */
-    public byte[] withoutEmojiPresentation() throws IOException {
-        Map<String, byte[]> copies = copies();
-        if (!copies.containsKey("cmap") || releaseEmojiPresentation(copies.get("cmap")) == 0) throw invalid("В шрифте нет последовательностей U+FE0F");
         return pack(buffer().getInt(0), copies);
     }
 

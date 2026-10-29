@@ -151,28 +151,17 @@ public class SfntFontTest {
         assertFalse(new SfntFont(fixture(false, false)).claimsEmojiPresentation());
     }
 
-    @Test public void textCopyHandsOnlyEmojiPresentationToFallback() throws Exception {
-        byte[] input = variationFont(false);
-        SfntFont original = new SfntFont(input);
-        SfntFont released = new SfntFont(original.withoutEmojiPresentation());
-        assertFalse(released.claimsEmojiPresentation());
-        assertFalse(released.hasVariationSequence(0xA9, 0xFE0F)); assertFalse(released.hasVariationSequence(0x2122, 0xFE0F));
-        assertTrue(released.hasVariationSequence(0xA9, 0xFE0E)); assertTrue(released.hasCodePoint(0xA9));
-        assertEquals(-100, released.underlinePosition());
-        assertEquals(table(input, "cmap").length, table(original.withoutEmojiPresentation(), "cmap").length);
-        assertTrue(original.hasVariationSequence(0xA9, 0xFE0F));
-
-        SfntFont repaired = new SfntFont(original.withUnderline(-150, 60, true));
-        assertEquals(-150, repaired.underlinePosition()); assertFalse(repaired.claimsEmojiPresentation());
-        assertTrue(new SfntFont(original.withUnderline(-150, 60)).claimsEmojiPresentation());
-        try { released.withoutEmojiPresentation(); fail(); } catch (IOException expected) { /* nothing left to release */ }
-    }
-
     @Test public void ignoresTruncatedVariationSubtable() throws Exception {
         byte[] input = variationFont(false);
-        byte[] cmap = table(input, "cmap");
-        ByteBuffer.wrap(cmap).putInt(20 + 40 + 2, 1 << 20);
-        assertEquals(0, SfntFont.releaseEmojiPresentation(cmap));
+        ByteBuffer b = ByteBuffer.wrap(input); int count = b.getShort(4) & 0xffff;
+        for (int i = 0; i < count; i++) {
+            int record = 12 + i * 16;
+            // Claim a format 14 subtable far longer than the cmap table.
+            if (new String(input, record, 4, StandardCharsets.US_ASCII).equals("cmap")) b.putInt(b.getInt(record + 8) + 20 + 40 + 2, 1 << 20);
+        }
+        SfntFont font = new SfntFont(input);
+        assertFalse(font.hasVariationSequence(0xA9, 0xFE0F)); assertFalse(font.claimsEmojiPresentation());
+        assertTrue(font.hasCodePoint(0xA9));
     }
 
     @Test public void checksumPadsPartialWord() { assertEquals(0x01020300L, SfntFont.checksum(new byte[]{1, 2, 3})); }
