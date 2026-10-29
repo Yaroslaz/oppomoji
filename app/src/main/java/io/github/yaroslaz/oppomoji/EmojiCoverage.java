@@ -8,6 +8,7 @@ import android.graphics.fonts.Font;
 import android.graphics.fonts.FontFamily;
 import android.graphics.text.PositionedGlyphs;
 import android.graphics.text.TextRunShaper;
+import android.os.Build;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -30,6 +31,7 @@ final class EmojiCoverage {
     boolean complete() { return supported == total; }
 
     static EmojiCoverage measure(Context context, Font font) throws IOException {
+        if (Build.VERSION.SDK_INT < 31) throw new IOException("Проверка полноты набора доступна с Android 12");
         // The emoji font leads, so text-default sequences such as "©️" are judged on the font itself.
         Typeface typeface = new Typeface.CustomFallbackBuilder(new FontFamily.Builder(font).build()).build();
         Paint paint = new Paint(); paint.setTypeface(typeface); paint.setTextSize(48);
