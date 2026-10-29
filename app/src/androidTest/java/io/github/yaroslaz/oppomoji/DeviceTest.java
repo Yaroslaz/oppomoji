@@ -419,6 +419,8 @@ public class DeviceTest {
                     assertEquals(new File(context.getFilesDir(), "emoji-repaired.ttf"), SystemFontAccess.resolve("👨‍👩‍👧‍👦", after.getPaint()).getFile());
                     // Plain letters and digits stay in the text font.
                     assertTrue(SystemFontAccess.resolve("1", after.getPaint()).getFile().getName().startsWith("text"));
+                    String coverage = ((TextView) activity.findViewById(R.id.emoji_coverage)).getText().toString();
+                    assertTrue(coverage, coverage.contains("3953 из 3953"));
                     TextView showcase = activity.findViewById(R.id.emoji_showcase);
                     assertEquals(new File(context.getFilesDir(), "emoji-repaired.ttf"), SystemFontAccess.resolve("😀", showcase.getPaint()).getFile());
                 } catch (java.io.IOException error) { throw new AssertionError(error); }
