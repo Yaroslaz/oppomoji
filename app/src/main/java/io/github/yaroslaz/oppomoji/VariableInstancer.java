@@ -164,7 +164,7 @@ final class VariableInstancer {
                 break; // Only the first matching record applies.
             }
         }
-        return FontMerger.layout(table, extension, alternates, null, 0);
+        return FontTables.layout(table, extension, alternates);
     }
 
     private static boolean matches(ByteBuffer b, int length, int set, int offset, double[] coords) {
