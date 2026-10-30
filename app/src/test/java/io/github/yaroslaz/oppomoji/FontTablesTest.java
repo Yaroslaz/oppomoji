@@ -28,10 +28,16 @@ public class FontTablesTest {
         map.put(0x2122, 22); map.put(0x2764, 168); map.put(0x1F600, 883);
         FontTables.Sequences sequences = new FontTables.Sequences();
         for (int cp : new int[]{0x23, 0x31, 0xA9, 0x2122, 0x2764}) sequences.defaults(FontTables.VS16).add(cp);
-        byte[] slot = EmojiSlot.cmap(FontTables.writeCmap(map, sequences));
+        byte[] slot = EmojiSlot.cmap(FontTables.writeCmap(map, sequences), true);
         TreeMap<Integer, Integer> kept = FontTables.mapping(slot);
-        for (int cp : new int[]{0x20, 0x23, 0x31, 0xA9, 0x2122}) assertFalse(Integer.toHexString(cp), kept.containsKey(cp));
+        for (int cp : new int[]{0x23, 0x31, 0xA9, 0x2122}) assertFalse(Integer.toHexString(cp), kept.containsKey(cp));
         for (int cp : new int[]{0x200D, 0x20E3, 0x2764, 0x1F600}) assertTrue(Integer.toHexString(cp), kept.containsKey(cp));
+        // The narrowed space glyph serves both spaces, so no line falls back to the tall Myanmar space.
+        assertEquals(Integer.valueOf(3), kept.get(0x20));
+        assertEquals(Integer.valueOf(3), kept.get(0xA0));
+        TreeMap<Integer, Integer> withoutSpaces = FontTables.mapping(EmojiSlot.cmap(FontTables.writeCmap(map, sequences), false));
+        assertFalse(withoutSpaces.containsKey(0x20));
+        assertFalse(withoutSpaces.containsKey(0xA0));
         FontTables.Sequences read = FontTables.sequences(slot);
         // "1️⃣", "#️⃣", "©️" and "™️" still reach their pictures; "❤" stays the emoji font's own glyph.
         assertEquals(Integer.valueOf(7), read.mapped(FontTables.VS16).get(0x31));
@@ -42,8 +48,17 @@ public class FontTablesTest {
     }
 
     @Test public void textLikeCharactersMatchTheSlotRules() {
-        for (int cp : new int[]{' ', '1', '#', '*', '.', 0xA9, 0xAE, 0x203C, 0x2049, 0x2122, 0x2139, 0x2194, 0x21AA}) assertTrue(Integer.toHexString(cp), EmojiSlot.textLike(cp));
-        for (int cp : new int[]{0x200D, 0x20E3, 0x231A, 0x2764, 0xFE0F, 0x1F600, 0xE0067}) assertFalse(Integer.toHexString(cp), EmojiSlot.textLike(cp));
+        for (int cp : new int[]{'1', '#', '*', '.', '?', 0x2026, 0xA9, 0xAE, 0x203C, 0x2049, 0x2122, 0x2139, 0x2194, 0x21AA}) assertTrue(Integer.toHexString(cp), EmojiSlot.textLike(cp));
+        for (int cp : new int[]{' ', 0xA0, 0x200D, 0x20E3, 0x231A, 0x2764, 0xFE0F, 0x1F600, 0xE0067}) assertFalse(Integer.toHexString(cp), EmojiSlot.textLike(cp));
+    }
+
+    @Test public void setsAnAdvanceOnlyWhereHmtxHasItsOwnEntry() {
+        byte[] hhea = new byte[36]; ByteBuffer.wrap(hhea).putShort(34, (short) 4);
+        byte[] hmtx = new byte[4 * 4 + 2 * 2];
+        ByteBuffer.wrap(hmtx).putShort(3 * 4, (short) 2550);
+        assertTrue(EmojiSlot.setAdvance(hhea, hmtx, 3, 507));
+        assertEquals(507, ByteBuffer.wrap(hmtx).getShort(3 * 4));
+        assertFalse(EmojiSlot.setAdvance(hhea, hmtx, 5, 507));
     }
 
     @Test public void normalizesThroughAvarAndScalesTuples() throws Exception {

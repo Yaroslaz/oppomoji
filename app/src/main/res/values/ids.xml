@@ -22,4 +22,6 @@
     <item name="emoji_coverage" type="id" />
     <item name="export_sans" type="id" />
     <item name="system_now" type="id" />
+    <item name="update_app" type="id" />
+    <item name="check_update" type="id" />
 </resources>

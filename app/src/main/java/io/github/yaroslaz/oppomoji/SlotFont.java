@@ -67,6 +67,10 @@ final class SlotFont {
             else if (!emojiSlot && !slot.equals(glyph.file)) problems.append(" «").append(probe).append("» не из файла;");
         }
         if (emojiSlot) {
+            // The slot keeps the space (see EmojiSlot); it must come out as wide as a text space.
+            float space = paint.measureText(" ") / paint.getTextSize();
+            if (slot.equals(fileOf(" ", paint)) && Math.abs(space - EmojiSlot.SPACE_EM) > 0.02f)
+                problems.append(" пробел шириной ").append(Math.round(space * 100)).append("% кегля;");
             for (String probe : EMOJI_PROBES) {
                 Glyph glyph = glyph(probe, paint);
                 if (!glyph.ink || !slot.equals(glyph.file)) problems.append(" ").append(probe).append(" не из iOS-набора;");
@@ -76,6 +80,13 @@ final class SlotFont {
     }
 
     private static final class Glyph { File file; boolean ink; }
+
+    /** The file of the first glyph, inked or not. */
+    static File fileOf(String text, Paint paint) {
+        if (Build.VERSION.SDK_INT < 31) return null;
+        PositionedGlyphs glyphs = TextRunShaper.shapeTextRun(text, 0, text.length(), 0, text.length(), 0, 0, false, paint);
+        return glyphs.glyphCount() == 0 ? null : glyphs.getFont(0).getFile();
+    }
 
     /** Which file draws the first glyph, and whether the text actually paints pixels (not just has bounds). */
     private static Glyph glyph(String text, Paint paint) {

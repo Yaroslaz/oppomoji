@@ -413,7 +413,8 @@ public class DeviceTest {
             SfntFont text = new SfntFont(DeviceFonts.read(roboto()));
             SfntFont font = new SfntFont(DeviceFonts.read(context.getContentResolver().openInputStream(exported[0]), SfntFont.MAX_BYTES));
             assertTrue(font.hasTable("CBDT")); assertFalse(font.hasTable("glyf"));
-            for (int cp : new int[]{' ', '1', '#', '.', 'A', 0xA9}) assertFalse("U+" + Integer.toHexString(cp), font.hasCodePoint(cp));
+            for (int cp : new int[]{'1', '#', '.', '?', 'A', 0xA9, 0x2026}) assertFalse("U+" + Integer.toHexString(cp), font.hasCodePoint(cp));
+            assertTrue(font.hasCodePoint(' ')); assertTrue(font.hasCodePoint(0xA0));
             assertTrue(font.hasVariationSequence('1', 0xFE0F)); assertTrue(font.hasVariationSequence(0xA9, 0xFE0F));
             int depth = Math.max(2, Math.min(25, Math.round(-text.underlinePosition() * 100f / text.unitsPerEm())));
             assertEquals(-Math.round(depth * font.unitsPerEm() / 100f), font.underlinePosition());
@@ -428,8 +429,14 @@ public class DeviceTest {
                 assertTrue(emoji + " must be visible", ink(paint, emoji));
                 assertEquals(emoji, slot, drawnBy(paint, emoji));
             }
-            // A space from the system font is narrow; the emoji font's own space was 1.25 em.
-            assertTrue(paint.measureText(" ") < paint.getTextSize() * 0.5f);
+            // The slot draws the space itself (under Dai the next one is the tall Myanmar space), and it is
+            // as narrow as a text space: the emoji font's own space was 1.25 em.
+            for (String space : new String[]{" ", "\u00A0"}) {
+                assertEquals(slot, SlotFont.fileOf(space, paint));
+                assertEquals(EmojiSlot.SPACE_EM * paint.getTextSize(), paint.measureText(space), 1f);
+                assertFalse(ink(paint, space));
+            }
+            assertEquals(paint.measureText("Я") * 2 + EmojiSlot.SPACE_EM * paint.getTextSize(), paint.measureText("Я Я"), 1.5f);
             scenario.onActivity(activity -> {
                 try {
                     TextView showcase = activity.findViewById(R.id.emoji_showcase);
