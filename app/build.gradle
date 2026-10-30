@@ -12,13 +12,8 @@ android {
         applicationId 'io.github.yaroslaz.oppomoji'
         minSdk 29
         targetSdk 36
-<<<<<<< HEAD
         versionCode 12
         versionName '0.1.11-alpha'
-=======
-        versionCode 11
-        versionName '0.1.10-alpha'
->>>>>>> origin/main
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions {
