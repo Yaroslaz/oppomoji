@@ -16,7 +16,11 @@ permissions:
   contents: read
 
 env:
+<<<<<<< HEAD
   APP_VERSION: 0.1.11-alpha
+=======
+  APP_VERSION: 0.1.10-alpha
+>>>>>>> origin/main
 
 concurrency:
   group: android-${{ github.ref }}

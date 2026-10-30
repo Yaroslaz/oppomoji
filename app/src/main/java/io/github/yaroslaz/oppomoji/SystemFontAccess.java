@@ -114,6 +114,7 @@ final class SystemFontAccess {
             } catch (IOException | RuntimeException error) { russia.put(probe, error.toString()); }
         }
         result.put("screenTextRuRu", russia);
+<<<<<<< HEAD
         // ColorOS keeps OPPO Sans fallbacks tagged lang="osans-rc" and "osans-ext" behind Roboto. Under Dai the
         // letters fall to Roboto; a matching locale in the list might move them to OPPO Sans instead.
         JSONObject hints = new JSONObject();
@@ -148,6 +149,8 @@ final class SystemFontAccess {
             files.put(name, item);
         }
         result.put("oplusFallbackFonts", files);
+=======
+>>>>>>> origin/main
         return result;
     }
 
