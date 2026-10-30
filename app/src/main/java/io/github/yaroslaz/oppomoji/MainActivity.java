@@ -58,7 +58,7 @@ public final class MainActivity extends Activity {
     /** Bump when the repaired copies change for reasons other than the slider values. */
     private static final String REPAIR_FORMAT = "2";
     /** Bump when the slot files change for reasons other than their inputs. */
-    private static final String SLOT_FORMAT = "2";
+    private static final String SLOT_FORMAT = "3"; // 3: the slot draws narrow spaces itself.
     private static final int WARN = Color.rgb(255, 200, 120);
     private static final int SHOWCASE_COLUMNS = 8;
     // Includes ZWJ sequences and Emoji 15.1–17.0, so an older set shows its gaps here.
@@ -67,6 +67,9 @@ public final class MainActivity extends Activity {
             "🐱", "🍕", "🚀", "🇷🇺", "👨‍👩‍👧‍👦", "🙂‍↕️", "🫪", "🫯"};
     // Serialize file operations across Activity recreation as well as within one screen.
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
+    /** Update checks run beside font work, which keeps WORKER busy for minutes. */
+    private static final ExecutorService NETWORK = Executors.newSingleThreadExecutor();
+    private static final long UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000L;
     private final List<Button> actions = new ArrayList<>();
     private final List<TextView> interfaceText = new ArrayList<>();
     private final List<TextView> boldInterfaceText = new ArrayList<>();
@@ -92,6 +95,12 @@ public final class MainActivity extends Activity {
     private boolean textSupportsCyrillic = true;
     private boolean textClaimsEmoji;
     private boolean verifiedEmoji;
+    private LinearLayout updateCard;
+    private TextView updateTitle, updateNotes;
+    private Button updateButton;
+    private AppUpdate update;
+    private boolean awaitingInstallPermission;
+    private File updatesDir;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable refreshPreview = this::refresh;
     Uri lastReportUri;
@@ -112,7 +121,10 @@ public final class MainActivity extends Activity {
         metricsSource = prefs.getString("metricsSource", "default");
         verifiedEmoji = prefs.getBoolean("verifiedEmoji", false) && emojiFile.isFile();
         weight = prefs.getInt("weight", 500); depth = prefs.getInt("depth", 10); thickness = prefs.getInt("thickness", 40);
+        updatesDir = new File(getCacheDir(), "updates");
+        AppUpdate.clean(updatesDir); // An APK lives only between download and the install session.
         buildUi();
+        if (System.currentTimeMillis() - prefs.getLong("updateCheckedAt", 0) > UPDATE_INTERVAL_MS) checkUpdate(false);
         task("Проверяю сохранённые шрифты…", () -> {
             if (Build.VERSION.SDK_INT >= 31) {
                 try { activeSystemEmoji = SystemFontAccess.resolve("😀"); activeSystemEmojiName = SystemFontAccess.familyName(activeSystemEmoji); }
@@ -165,6 +177,12 @@ public final class MainActivity extends Activity {
         TextView title = label("OPPOMoji", 34, WHITE); title.setTypeface(Typeface.DEFAULT, Typeface.BOLD); boldInterfaceText.add(title); heading(title); page.addView(title);
         page.addView(label("iOS-эмодзи Emoji 17.0 для ColorOS через zFont", 16, MUTED));
 
+        updateCard = card(page); updateCard.setVisibility(View.GONE);
+        updateTitle = label("", 17, DONE); updateCard.addView(updateTitle);
+        updateNotes = label("", 12, MUTED); updateNotes.setMaxLines(6); space(updateNotes, 6); updateCard.addView(updateNotes);
+        updateButton = primaryButton("Обновить", v -> startUpdate()); updateButton.setId(R.id.update_app); updateCard.addView(updateButton, spaced(10));
+        updateCard.addView(label("APK с GitHub проверяется по SHA-256 и ключу подписи, после установки удаляется. Настройки и файлы сохранятся.", 12, MUTED));
+
         LinearLayout hero = card(page);
         section(hero, "", "iOS-эмодзи для zFont");
         systemNow = label("Сейчас в системе: проверяю…", 13, PRIMARY); systemNow.setId(R.id.system_now); hero.addView(systemNow);
@@ -179,7 +197,7 @@ public final class MainActivity extends Activity {
         }
         Button prepare = primaryButton("Подготовить iOS-эмодзи для zFont", v -> prepareIos());
         prepare.setId(R.id.prepare_ios); hero.addView(prepare, spaced(14));
-        hero.addView(label("Слот Dai делает файл главным шрифтом системы, а Android не рисует буквы из файла с цветными эмодзи. Поэтому в файле только iOS-эмодзи: буквы, цифры, пробелы и точки система берёт из следующего шрифта ColorOS (Roboto). Набор (35 МБ) загружается с проверкой SHA-256.", 12, MUTED));
+        hero.addView(label("Слот Dai делает файл главным шрифтом системы, а Android не рисует буквы из файла с цветными эмодзи. Поэтому в файле только iOS-эмодзи и узкий пробел (иначе пробел берёт шрифт Мьянмы с высокими строками): буквы, цифры и точки система берёт из следующего шрифта ColorOS (Roboto). Набор (35 МБ) загружается с проверкой SHA-256.", 12, MUTED));
         hero.addView(button("Как установить через zFont", v -> instructions()));
         TextView alternative = label("Или OPPO Sans нужной жирности", 17, WHITE); space(alternative, 16); hero.addView(alternative);
         weightLabel = label(weightText(), 15, WHITE); hero.addView(weightLabel);
@@ -263,7 +281,9 @@ public final class MainActivity extends Activity {
         advanced.addView(button("Открыть настройки экрана", v -> openDisplaySettings()));
         advanced.addView(button("Убрать импортированные шрифты", v -> resetFonts()));
 
-        TextView footer = label("Обработка шрифтов работает без root и без отправки данных. Сеть нужна только для загрузки набора по кнопке.", 12, MUTED); space(footer, 20); page.addView(footer);
+        Button checkUpdates = button("Проверить обновления", v -> checkUpdate(true)); checkUpdates.setId(R.id.check_update);
+        page.addView(checkUpdates, spaced(20));
+        TextView footer = label("Обработка шрифтов работает без root и без отправки данных. Сеть нужна для загрузки набора по кнопке и для проверки релизов на GitHub (не чаще раза в 6 часов).", 12, MUTED); space(footer, 12); page.addView(footer);
     }
 
     /** Equal cells keep every row aligned; each emoji shrinks to its cell instead of wrapping. */
@@ -952,6 +972,78 @@ public final class MainActivity extends Activity {
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private static boolean supportsCyrillic(SfntFont font) { return font.hasCodePoint('Я') && font.hasCodePoint('я') && font.hasCodePoint('щ'); }
+    @Override protected void onResume() {
+        super.onResume();
+        UpdateReceiver.listener = message -> runOnUiThread(() -> { if (!isFinishing() && !isDestroyed()) status.setText(message); });
+        if (awaitingInstallPermission && getPackageManager().canRequestPackageInstalls()) { awaitingInstallPermission = false; startUpdate(); }
+    }
+
+    @Override protected void onPause() {
+        UpdateReceiver.listener = null;
+        super.onPause();
+    }
+
+    /** Looks for a newer GitHub release; only a manual check reports "up to date" or errors. */
+    private void checkUpdate(boolean manual) {
+        if (manual) status.setText("Проверяю релизы на GitHub…");
+        NETWORK.execute(() -> {
+            String outcome;
+            AppUpdate found = null;
+            try {
+                found = AppUpdate.newer(BuildConfig.VERSION_NAME);
+                prefs.edit().putLong("updateCheckedAt", System.currentTimeMillis()).apply();
+                outcome = found == null ? "Установлена последняя версия " + BuildConfig.VERSION_NAME : "Доступна версия " + found.version;
+            } catch (Exception error) { outcome = "Не удалось проверить обновления: " + error.getMessage(); }
+            AppUpdate result = found; String message = outcome;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (result != null) showUpdate(result);
+                if (manual && !busy) status.setText(message);
+            });
+        });
+    }
+
+    private void showUpdate(AppUpdate found) {
+        update = found;
+        updateTitle.setText("Доступна версия " + found.version + " (у тебя " + BuildConfig.VERSION_NAME + ")");
+        updateNotes.setText(found.notes.isEmpty() ? "Описание есть на странице релиза." : found.notes.replaceAll("(?m)^#+\\s*", "").replace("**", ""));
+        updateButton.setText("Обновить до " + found.version);
+        updateCard.setVisibility(View.VISIBLE);
+    }
+
+    private void startUpdate() {
+        AppUpdate target = update;
+        if (target == null) { checkUpdate(true); return; }
+        if (!getPackageManager().canRequestPackageInstalls()) {
+            new AlertDialog.Builder(this).setTitle("Разреши установку обновлений")
+                    .setMessage("Android ставит APK только от приложений с разрешением «Установка неизвестных приложений». Включи его для OPPOMoji и вернись — обновление продолжится само.")
+                    .setPositiveButton("Открыть настройки", (dialog, which) -> {
+                        awaitingInstallPermission = true;
+                        try { startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName()))); }
+                        catch (ActivityNotFoundException error) { awaitingInstallPermission = false; status.setText("Не нашёл экран разрешения: Настройки → Приложения → OPPOMoji → Установка неизвестных приложений"); }
+                    })
+                    .setNegativeButton("Отмена", null).show();
+            return;
+        }
+        task("Загружаю OPPOMoji " + target.version + "…", () -> {
+            runOnUiThread(() -> { progress.setIndeterminate(false); progress.setMax(100); progress.setProgress(0); });
+            File apk = null;
+            try {
+                apk = target.download(updatesDir, bytes -> runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    int percent = (int) (bytes * 100 / target.apkBytes);
+                    progress.setProgress(percent); status.setText("Загружаю OPPOMoji " + target.version + ": " + percent + "%");
+                }));
+                AppUpdate.verify(this, apk);
+                AppUpdate.install(this, apk);
+            } finally {
+                if (apk != null) Files.deleteIfExists(apk.toPath()); // The install session holds its own copy.
+                runOnUiThread(() -> progress.setIndeterminate(true));
+            }
+            return "Файл проверен и передан установщику. APK удалён";
+        });
+    }
+
     @Override protected void onDestroy() {
         main.removeCallbacks(refreshPreview);
         if (reportDialog != null && reportDialog.isShowing()) reportDialog.dismiss();

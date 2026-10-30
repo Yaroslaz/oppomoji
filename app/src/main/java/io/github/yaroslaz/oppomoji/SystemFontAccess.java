@@ -90,7 +90,7 @@ final class SystemFontAccess {
         JSONObject screen = new JSONObject();
         Paint ui = new Paint(); ui.setTypeface(Typeface.DEFAULT); ui.setTextSize(100);
         ui.setElegantTextHeight(true); ui.setTextLocales(android.os.LocaleList.getDefault());
-        for (String probe : new String[]{".", ",", ":", "\u00B7", "\u2022", "\u2026", "1", "A", "\u042F", " "}) {
+        for (String probe : new String[]{".", ",", ":", "?", "\u00B7", "\u2022", "\u2026", "\u201C", "1", "A", "\u042F", " ", "\u00A0"}) {
             JSONObject item = new JSONObject();
             try {
                 Font font = resolve(probe, ui);
@@ -103,6 +103,17 @@ final class SystemFontAccess {
             screen.put(probe, item);
         }
         result.put("screenText", screen);
+        // Under Dai, Noto Sans Myanmar wins over Roboto for the characters it has (space, "?", "…", quotes).
+        // The same probes with a Russian region show whether the region or the font order decides that.
+        JSONObject russia = new JSONObject();
+        Paint ru = new Paint(); ru.setTypeface(Typeface.DEFAULT); ru.setTextSize(100); ru.setTextLocales(android.os.LocaleList.forLanguageTags("ru-RU"));
+        for (String probe : new String[]{" ", "?", "\u2026", "\u201C"}) {
+            try {
+                File file = resolve(probe, ru).getFile();
+                russia.put(probe, file == null ? JSONObject.NULL : file.getAbsolutePath());
+            } catch (IOException | RuntimeException error) { russia.put(probe, error.toString()); }
+        }
+        result.put("screenTextRuRu", russia);
         return result;
     }
 
