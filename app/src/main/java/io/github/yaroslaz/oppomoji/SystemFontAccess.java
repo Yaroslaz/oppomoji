@@ -114,7 +114,50 @@ final class SystemFontAccess {
             } catch (IOException | RuntimeException error) { russia.put(probe, error.toString()); }
         }
         result.put("screenTextRuRu", russia);
+        // ColorOS keeps OPPO Sans fallbacks tagged lang="osans-rc" and "osans-ext" behind Roboto. Under Dai the
+        // letters fall to Roboto; a matching locale in the list might move them to OPPO Sans instead.
+        JSONObject hints = new JSONObject();
+        String system = android.os.LocaleList.getDefault().toLanguageTags();
+        for (String tags : new String[]{system, system + "," + OSANS_HINT, OSANS_HINT + "," + system, system + ",osans", system + ",osans-ext"}) {
+            JSONObject item = new JSONObject();
+            Paint hinted = new Paint(); hinted.setTypeface(Typeface.DEFAULT); hinted.setTextSize(100);
+            hinted.setTextLocales(android.os.LocaleList.forLanguageTags(tags));
+            item.put("parsed", hinted.getTextLocales().toLanguageTags());
+            for (String probe : new String[]{"\u042F", "A", "1", "?", "\u2026", "\u201C", " "}) {
+                try {
+                    File file = resolve(probe, hinted).getFile();
+                    item.put(probe, file == null ? JSONObject.NULL : file.getName());
+                } catch (IOException | RuntimeException error) { item.put(probe, error.toString()); }
+            }
+            DeviceFonts.finite(item, "width", hinted.measureText("Шрифт OPPO 123"));
+            hints.put(tags, item);
+        }
+        result.put("osansLocaleHints", hints);
+        JSONObject files = new JSONObject();
+        for (String name : new String[]{"OSans-RC-Regular.ttf", "OSans-Ext-Regular.otf", "SysSans-En-Regular.ttf"}) {
+            JSONObject item = new JSONObject();
+            try (FontFile source = new FontFile(new File("/system/fonts", name))) {
+                item.put("metadata", new JSONObject(source.describe(0)));
+                SfntFont font = source.metadata(0);
+                item.put("latin", count(font, 'A', 'Z') + count(font, 'a', 'z')).put("cyrillic", count(font, 0x410, 0x44F) + count(font, 0x401, 0x401) + count(font, 0x451, 0x451))
+                        .put("digits", count(font, '0', '9'));
+                StringBuilder punctuation = new StringBuilder();
+                for (char c : ".,:;!?\u2026\u201C\u201D\u00AB\u00BB\u2014 ".toCharArray()) if (font.hasCodePoint(c)) punctuation.append(c);
+                item.put("punctuation", punctuation.toString());
+            } catch (IOException | RuntimeException error) { item.put("error", error.toString()); }
+            files.put(name, item);
+        }
+        result.put("oplusFallbackFonts", files);
         return result;
+    }
+
+    /** The locale tag of the OPPO Sans fallback family in the ColorOS fonts.xml. */
+    static final String OSANS_HINT = "osans-RC";
+
+    private static int count(SfntFont font, int first, int last) {
+        int found = 0;
+        for (int cp = first; cp <= last; cp++) if (font.hasCodePoint(cp)) found++;
+        return found;
     }
 
     /** Only writes a local copy. The mapped buffer is useful when ColorOS hides the file path. */

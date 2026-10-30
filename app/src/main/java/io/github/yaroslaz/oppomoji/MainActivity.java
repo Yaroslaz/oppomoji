@@ -243,6 +243,12 @@ public final class MainActivity extends Activity {
         systemSample.setId(R.id.active_system_sample); interfaceText.remove(systemSample);
         systemSample.setTypeface(Typeface.DEFAULT); preview.addView(systemSample);
         preview.addView(label("Этот образец следует системным настройкам Dai. Остальные подписи используют выбранный текстовый шрифт.", 12, MUTED));
+        preview.addView(label("Тот же системный шрифт, если добавить в список языков тег OPPO Sans (" + SystemFontAccess.OSANS_HINT + ")", 12, PRIMARY));
+        TextView hinted = label("Первая строка: Яя Щщ\nВторая строка: OPPO Sans?…\nТретья строка: 😀 👋", 15, WHITE);
+        hinted.setId(R.id.osans_hint_sample); interfaceText.remove(hinted); hinted.setTypeface(Typeface.DEFAULT);
+        hinted.setTextLocales(android.os.LocaleList.forLanguageTags(android.os.LocaleList.getDefault().toLanguageTags() + "," + SystemFontAccess.OSANS_HINT));
+        preview.addView(hinted);
+        preview.addView(label("Эксперимент. Если здесь при включённом Dai буквы как у OPPO Sans, а эмодзи iOS, то тот же тег в настройках языка может вернуть OPPO Sans во всю систему.", 12, MUTED));
 
         LinearLayout metrics = card(page);
         section(metrics, "03", "Линия подчёркивания");
