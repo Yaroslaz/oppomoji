@@ -24,4 +24,5 @@
     <item name="system_now" type="id" />
     <item name="update_app" type="id" />
     <item name="check_update" type="id" />
+    <item name="osans_hint_sample" type="id" />
 </resources>
